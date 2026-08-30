@@ -25,7 +25,8 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Check files
-        run: |
-          ls -la
-          python -m py_compile app.py
+      - name: Run LINE Bot
+        env:
+          LINE_CHANNEL_SECRET: ${{ secrets.LINE_CHANNEL_SECRET }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: python bot.py
