@@ -23,7 +23,15 @@ jobs:
         run: |
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
-          else
+                - name: Check files
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Files:"
+          ls -la
+          echo "Checking app.py:"
+          ls -l "$GITHUB_WORKSPACE/app.py"
+          echo "app.py found!"
             pip install flask requests
           fi
 
