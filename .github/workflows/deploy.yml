@@ -33,12 +33,15 @@ jobs:
           pwd
           echo "Files:"
           ls -la
-          echo "Searching for app.py:"
-          find "$GITHUB_WORKSPACE" -type f -name "app.py" -print
+          echo "Checking app.py:"
+          test -f app.py
+          echo "app.py found!"
 
-      - name: Run LINE Bot
+      - name: Check LINE secrets
         env:
           LINE_CHANNEL_SECRET: ${{ secrets.LINE_CHANNEL_SECRET }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         run: |
-            python3 "$GITHUB_WORKSPACE/app.py"
+          test -n "$LINE_CHANNEL_SECRET"
+          test -n "$LINE_CHANNEL_ACCESS_TOKEN"
+          echo "LINE secrets are configured."
