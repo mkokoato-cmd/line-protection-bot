@@ -27,17 +27,24 @@ jobs:
             pip install flask requests
           fi
 
-      - name: Check app.py
-        run: |
-          echo "Checking app.py..."
-          ls -la "$GITHUB_WORKSPACE"
-          if [ ! -f "$GITHUB_WORKSPACE/app.py" ]; then
+          - name: Check app.py
+          run: |
+          echo "Current directory:"
+          pwd
+          echo "Files:"
+          ls -la
+          echo "Searching for app.py..."
+          find . -maxdepth 3 -name "app.py" -print
+          if [ -f "./app.py" ]; then
+            echo "app.py found!"
+            python -m py_compile ./app.py
+            echo "app.py syntax OK!"
+          else
             echo "ERROR: app.py not found!"
             exit 1
           fi
-          echo "app.py found!"
-          python -m py_compile "$GITHUB_WORKSPACE/app.py"
-          echo "app.py syntax OK!"
+          
+        
 
       - name: Check LINE secrets
         env:
