@@ -29,9 +29,21 @@ jobs:
         run: |
           pwd
           ls -la
+          find . -name "app.py" -type f
 
       - name: Run LINE Bot
         env:
           LINE_CHANNEL_SECRET: ${{ secrets.LINE_CHANNEL_SECRET }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-        run: python3 ./app.py
+        run: |
+         APP_FILE=$(find . -name 
+         "app.py" -type f | head -n 1)
+        echo "Found: $APP_FILE"
+
+         if [ -z "$APP_FILE" ]; then
+        echo "ERROR: app.py が見つかりません"
+          exit 1
+       fi
+
+       python3 "$APP_FILE"
+    
