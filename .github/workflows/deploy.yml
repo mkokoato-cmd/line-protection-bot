@@ -28,3 +28,4 @@ jobs:
       - name: Check files
         run: |
           ls -la
+          python -m py_compile *.py
