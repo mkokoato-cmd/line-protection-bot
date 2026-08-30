@@ -31,11 +31,19 @@ jobs:
           echo "Files:"
           ls -la
           echo "Searching for app.py:"
-          find . -maxdepth 3 -name "app.py" -print
+          find . -maxdepth 3 -type f -name "app.py" -print
 
       - name: Check app.py
         run: |
-          python -m py_compile ./app.py
+          APP_FILE=$(find . -maxdepth 3 -type f -name "app.py" -print -quit)
+
+          if [ -z "$APP_FILE" ]; then
+            echo "ERROR: app.py was not found!"
+            exit 1
+          fi
+
+          echo "Found: $APP_FILE"
+          python -m py_compile "$APP_FILE"
           echo "app.py syntax OK!"
 
       - name: Check LINE secrets
@@ -52,8 +60,6 @@ jobs:
           LINE_CHANNEL_SECRET: ${{ secrets.LINE_CHANNEL_SECRET }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         run: |
-          python app.py
-
-      - name: Post Set up Python
-        if: always()
-        run: echo "Workflow finished."
+          APP_FILE=$(find . -maxdepth 3 -type f -name "app.py" -print -quit)
+          echo "Starting: $APP_FILE"
+          python "$APP_FILE"
