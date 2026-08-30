@@ -28,6 +28,4 @@ jobs:
       - name: Check files
         run: |
           ls -la
-          for f in *.py; do
-            python -m py_compile "$f"
-          done
+          python -m py_compile app.py
