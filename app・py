@@ -12,12 +12,11 @@ app = Flask(__name__)
 CHANNEL_SECRET = os.environ.get("CHANNEL_SECRET", "")
 CHANNEL_ACCESS_TOKEN = os.environ.get("CHANNEL_ACCESS_TOKEN", "")
 
-# ユーザーごとの連投記録
-user_messages = {}
+# 荒らし対策用の設定
+SPAM_LIMIT = 5
+SPAM_WINDOW = 10
 
-# 連投判定
-MAX_SAME_MESSAGE = 3
-TIME_WINDOW = 10
+user_messages = {}
 
 
 def verify_signature(body, signature):
@@ -50,7 +49,14 @@ def reply_message(reply_token, text):
         ]
     }
 
-    requests.post(url, headers=headers, json=data, timeout=10)
+    response = requests.post(
+        url,
+        headers=headers,
+        json=data,
+        timeout=10
+    )
+
+    return response
 
 
 @app.route("/", methods=["GET"])
@@ -60,19 +66,17 @@ def home():
 
 @app.route("/callback", methods=["POST"])
 def callback():
+
     body = request.get_data()
     signature = request.headers.get("X-Line-Signature", "")
-
-    # LINEからの正しい通信か確認
-    if not CHANNEL_SECRET:
-        abort(500)
 
     if not verify_signature(body, signature):
         abort(400)
 
-    data = request.get_json()
+    event_data = request.get_json()
 
-    for event in data.get("events", []):
+    for event in event_data.get("events", []):
+
         if event.get("type") != "message":
             continue
 
@@ -82,39 +86,37 @@ def callback():
             continue
 
         user_id = event.get("source", {}).get("userId", "unknown")
-        text = message.get("text", "").strip()
-
+        text = message.get("text", "")
         now = time.time()
 
-        # 古い記録を削除
+        # ユーザーごとのメッセージ履歴
         if user_id not in user_messages:
             user_messages[user_id] = []
 
+        user_messages[user_id].append(now)
+
+        # 10秒より古い記録を削除
         user_messages[user_id] = [
-            item for item in user_messages[user_id]
-            if now - item["time"] <= TIME_WINDOW
+            t for t in user_messages[user_id]
+            if now - t <= SPAM_WINDOW
         ]
 
-        # 今回のメッセージを記録
-        user_messages[user_id].append({
-            "text": text,
-            "time": now
-        })
+        # 短時間に大量投稿した場合
+        if len(user_messages[user_id]) >= SPAM_LIMIT:
 
-        # 同じ文章の連投をチェック
-        same_count = sum(
-            1 for item in user_messages[user_id]
-            if item["text"] == text
-        )
-
-        if same_count >= MAX_SAME_MESSAGE:
             reply_token = event.get("replyToken")
 
             if reply_token:
                 reply_message(
                     reply_token,
-                    "⚠️ 連投を検知しました。\n同じメッセージの連続投稿は控えてください。"
+                    "⚠️ 荒らし・連投を検知しました。\n短時間の連続投稿は控えてください。"
                 )
+
+            user_messages[user_id] = []
+
+        # 通常メッセージ
+        else:
+            print(f"Message: {text}")
 
     return "OK"
 
