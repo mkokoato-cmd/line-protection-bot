@@ -25,11 +25,26 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      
+      - name: Check files
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Files:"
+          ls -la
+          echo "Searching for app.py:"
+          find "$GITHUB_WORKSPACE" -type f -name "app.py" -print
 
       - name: Run LINE Bot
         env:
           LINE_CHANNEL_SECRET: ${{ secrets.LINE_CHANNEL_SECRET }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         run: |
-          python3 ./app.py
+          APP_FILE=$(find "$GITHUB_WORKSPACE" -type f -name "app.py" -print -quit)
+          echo "Found: $APP_FILE"
+
+          if [ -z "$APP_FILE" ]; then
+            echo "ERROR: app.py が見つかりません"
+            exit 1
+          fi
+
+          python3 "$APP_FILE"
