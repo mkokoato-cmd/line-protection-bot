@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build:
@@ -40,4 +41,13 @@ jobs:
           LINE_CHANNEL_SECRET: ${{ secrets.LINE_CHANNEL_SECRET }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         run: |
+          APP=$(find "$GITHUB_WORKSPACE" -type f -name "app.py" -print -quit)
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: app.py not found"
+            exit 1
+          fi
+
+          echo "Running: $APP"
+          cd "$(dirname "$APP")"
           python3 app.py
