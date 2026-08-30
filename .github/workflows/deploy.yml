@@ -27,6 +27,7 @@ jobs:
           else
             pip install flask requests
           fi
+      
       - name: Check files
         run: |
           echo "Current directory:"
@@ -34,9 +35,12 @@ jobs:
           echo "Files:"
           ls -la
           echo "Checking app.py:"
-          test -f app.py
-          echo "app.py found!"
-
+          if [ -f app.py ]; then
+            echo "app.py found!"
+          else
+            echo "ERROR: app.py not found!"
+            exit 1
+          fi
       - name: Check LINE secrets
         env:
           LINE_CHANNEL_SECRET: ${{ secrets.LINE_CHANNEL_SECRET }}
