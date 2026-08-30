@@ -31,9 +31,13 @@ jobs:
         run: |
           echo "Checking app.py..."
           ls -la "$GITHUB_WORKSPACE"
-          test -f "$GITHUB_WORKSPACE/app.py"
+          if [ ! -f "$GITHUB_WORKSPACE/app.py" ]; then
+            echo "ERROR: app.py not found!"
+            exit 1
+          fi
+          echo "app.py found!"
           python -m py_compile "$GITHUB_WORKSPACE/app.py"
-          echo "app.py OK!"
+          echo "app.py syntax OK!"
 
       - name: Check LINE secrets
         env:
