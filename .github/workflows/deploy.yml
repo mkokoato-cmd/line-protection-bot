@@ -25,11 +25,7 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Check files
-        run: |
-          pwd
-          ls -la
-          test -f app.py
+      
 
       - name: Run LINE Bot
         env:
