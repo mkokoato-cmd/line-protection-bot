@@ -12,7 +12,6 @@ app = Flask(__name__)
 CHANNEL_SECRET = os.environ.get("CHANNEL_SECRET", "")
 CHANNEL_ACCESS_TOKEN = os.environ.get("CHANNEL_ACCESS_TOKEN", "")
 
-# 荒らし対策用の設定
 SPAM_LIMIT = 5
 SPAM_WINDOW = 10
 
@@ -20,6 +19,9 @@ user_messages = {}
 
 
 def verify_signature(body, signature):
+    if not CHANNEL_SECRET or not signature:
+        return False
+
     hash_value = hmac.new(
         CHANNEL_SECRET.encode("utf-8"),
         body,
@@ -36,7 +38,7 @@ def reply_message(reply_token, text):
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+        "Authorization": "Bearer " + CHANNEL_ACCESS_TOKEN
     }
 
     data = {
@@ -56,67 +58,75 @@ def reply_message(reply_token, text):
         timeout=10
     )
 
-    return response
+    response.raise_for_status()
+
+
+def is_spam(user_id):
+    now = time.time()
+
+    messages = user_messages.get(user_id, [])
+
+    messages = [
+        timestamp
+        for timestamp in messages
+        if now - timestamp < SPAM_WINDOW
+    ]
+
+    messages.append(now)
+    user_messages[user_id] = messages
+
+    return len(messages) > SPAM_LIMIT
 
 
 @app.route("/", methods=["GET"])
-def home():
-    return "LINE Protection Bot is running!"
+def index():
+    return "LINE Protection Bot is running."
 
 
 @app.route("/callback", methods=["POST"])
 def callback():
-
     body = request.get_data()
     signature = request.headers.get("X-Line-Signature", "")
 
     if not verify_signature(body, signature):
         abort(400)
 
-    event_data = request.get_json()
+    events = request.get_json().get("events", [])
 
-    for event in event_data.get("events", []):
-
+    for event in events:
         if event.get("type") != "message":
             continue
 
-        message = event.get("message", {})
-
-        if message.get("type") != "text":
+        if event.get("message", {}).get("type") != "text":
             continue
 
-        user_id = event.get("source", {}).get("userId", "unknown")
-        text = message.get("text", "")
-        now = time.time()
+        reply_token = event.get("replyToken")
 
-        # ユーザーごとのメッセージ履歴
-        if user_id not in user_messages:
-            user_messages[user_id] = []
+        source = event.get("source", {})
+        user_id = source.get("userId", "unknown")
 
-        user_messages[user_id].append(now)
+        text = event["message"]["text"]
 
-        # 10秒より古い記録を削除
-        user_messages[user_id] = [
-            t for t in user_messages[user_id]
-            if now - t <= SPAM_WINDOW
-        ]
-
-        # 短時間に大量投稿した場合
-        if len(user_messages[user_id]) >= SPAM_LIMIT:
-
-            reply_token = event.get("replyToken")
-
+        if is_spam(user_id):
             if reply_token:
                 reply_message(
                     reply_token,
-                    "⚠️ 荒らし・連投を検知しました。\n短時間の連続投稿は控えてください。"
+                    "⚠️ 短時間にたくさんのメッセージが送られています。"
                 )
+            continue
 
-            user_messages[user_id] = []
+        ng_words = [
+            "死ね",
+            "消えろ",
+            "殺す"
+        ]
 
-        # 通常メッセージ
-        else:
-            print(f"Message: {text}")
+        if any(word in text for word in ng_words):
+            if reply_token:
+                reply_message(
+                    reply_token,
+                    "⚠️ 不適切な言葉が検出されました。"
+                )
 
     return "OK"
 
