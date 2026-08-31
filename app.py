@@ -301,7 +301,7 @@ if event_type == "memberJoined":
         # 通常メッセージ
         
 
-        elif event_type == "message":
+elif event_type == "message":
 
             print(
                 "通常メッセージを受信しました"
