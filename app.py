@@ -272,22 +272,19 @@ def callback():
 
 
                 message = (
-                    "🛡️ 退会検知\n\n"
-                    "👤 {name}さんが\n"
-                    "グループから退出しました。
-                \n\n"
-                    "⚠️ 強制退会・本人による退会の
-                  \n"
-                    "判別はLINEのイベント情報から
-                  \n"
-                    "できません。"
+    "🛡️ 退会検知\n\n"
+    f"👤 {name}さんが\n"
+    "グループから退出しました。\n\n"
+    "⚠️ 強制退会・本人による退会の\n"
+    "判別はLINEのイベント情報から\n"
+    "できません。"
 )
 
-                 if  reply_token:
-                      reply_message(
-                          reply_token,
-                          message
-                      ) 
+if reply_token:
+    reply_message(
+        reply_token,
+        message
+    )
         # ==================================
         # 通常メッセージ
         # ==================================
