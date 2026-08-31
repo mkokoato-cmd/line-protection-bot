@@ -280,7 +280,7 @@ def callback():
     "できません。"
 )
 
-elif event_type == "memberLeft":
+if event_type == "memberLeft":
     print("⚠️ メンバーがグループから退出しました")
 
     send_message(
@@ -290,7 +290,8 @@ elif event_type == "memberLeft":
         "LINEのイベント情報から判別できません。"
     )
 
-elif event_type == "memberJoined":
+if event_type == 
+"memberJoined":
     print("👤 メンバーがグループに追加されました")
 
     send_message(
