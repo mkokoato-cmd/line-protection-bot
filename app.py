@@ -43,8 +43,7 @@ def is_spam(user_id):
         user_messages[user_id] = []
 
     user_messages[user_id] = [
-        t
-        for t in user_messages[user_id]
+        t for t in user_messages[user_id]
         if now - t < SPAM_WINDOW
     ]
 
@@ -84,37 +83,83 @@ def reply_message(reply_token, message):
 
 @app.route("/callback", methods=["POST"])
 def callback():
+
     body = request.get_data()
-    signature = request.headers.get("X-Line-Signature")
+
+    signature = request.headers.get(
+        "X-Line-Signature",
+        ""
+    )
 
     if not verify_signature(body, signature):
         abort(400)
 
     data = request.get_json(silent=True) or {}
+
     events = data.get("events", [])
 
     for event in events:
 
-        if event.get("type") != "message":
+        event_type = event.get("type")
+
+        # =====================================
+        # グループメンバー退出検知
+        # =====================================
+
+        if event_type == "memberLeft":
+
+            reply_token = event.get("replyToken")
+
+            if reply_token:
+                reply_message(
+                    reply_token,
+                    "🚨 メンバー退出を検知しました。\n"
+                    "グループからメンバーが退出しました。"
+                )
+
             continue
 
-        if event.get("message", {}).get("type") != "text":
+        # =====================================
+        # メッセージ以外は無視
+        # =====================================
+
+        if event_type != "message":
+            continue
+
+        message = event.get("message", {})
+
+        if message.get("type") != "text":
             continue
 
         reply_token = event.get("replyToken")
 
         source = event.get("source", {})
-        user_id = source.get("userId", "unknown")
 
-        text = event["message"]["text"]
+        user_id = source.get(
+            "userId",
+            "unknown"
+        )
+
+        text = message.get("text", "")
+
+        # =====================================
+        # スパム検知
+        # =====================================
 
         if is_spam(user_id):
+
             if reply_token:
                 reply_message(
                     reply_token,
-                    "⚠️ 短時間にたくさんのメッセージが送られています。少し時間をおいてください。"
+                    "⚠️ 短時間にたくさんのメッセージが送られています。"
+                    " 少し時間をおいてください。"
                 )
+
             continue
+
+        # =====================================
+        # 不適切な言葉の検知
+        # =====================================
 
         ng_words = [
             "死ね",
@@ -123,16 +168,25 @@ def callback():
         ]
 
         if any(word in text for word in ng_words):
+
             if reply_token:
                 reply_message(
                     reply_token,
                     "⚠️ 不適切な言葉が検出されました。"
                 )
+
             continue
 
     return "OK"
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+
+    port = int(
+        os.environ.get("PORT", 8080)
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
