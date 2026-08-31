@@ -281,12 +281,11 @@ def callback():
 )
 
 
-                if reply_token:
-
-                    reply_message(
-                        reply_token,
-                        message
-                    )
+    if reply_token:
+        reply_message(
+            reply_token,
+            message
+        )
 
 
         # ==================================
