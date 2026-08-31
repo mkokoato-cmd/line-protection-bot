@@ -107,26 +107,26 @@ def callback():
 
         text = event["message"]["text"]
 
-        if is_spam(user_id):
-            if reply_token:
-                reply_message(
-                    reply_token,
-                    "⚠️ 短時間にたくさんのメッセージが送られています。"
-                )
-            continue
+    if is_spam(user_id):
+        if reply_token:
+            reply_message(
+                reply_token,
+                "⚠️ 短時間にたくさんのメッセージが送られています。少し時間をおいてください。"
+            )
+        continue
 
-        ng_words = [
-            "死ね",
-            "消えろ",
-            "殺す"
-        ]
+    ng_words = [
+        "死ね",
+        "消えろ",
+        "殺す"
+    ]
 
-        if any(word in text for word in ng_words):
-            if reply_token:
-                reply_message(
-                    reply_token,
-                    "⚠️ 不適切な言葉が検出されました。"
-                )
+    if any(word in text for word in ng_words):
+        if reply_token:
+            reply_message(
+                reply_token,
+                "⚠️ 不適切な言葉が検出されました。"
+            )
 
     return "OK"
 
