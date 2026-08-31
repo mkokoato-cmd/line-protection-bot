@@ -280,10 +280,22 @@ def callback():
     "できません。"
 )
 
-if reply_token:
-    reply_message(
-        reply_token,
-        message
+elif event_type == "memberLeft":
+    print("⚠️ メンバーがグループから退出しました")
+
+    send_message(
+        group_id,
+        "⚠️ メンバーがグループから退出しました。\n\n"
+        "※ 強制退会か本人による退会かは、"
+        "LINEのイベント情報から判別できません。"
+    )
+
+elif event_type == "memberJoined":
+    print("👤 メンバーがグループに追加されました")
+
+    send_message(
+        group_id,
+        "👤 新しいメンバーがグループに追加されました。"
     )
         # ==================================
         # 通常メッセージ
