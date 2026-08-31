@@ -19,7 +19,7 @@ user_messages = {}
 
 
 def verify_signature(body, signature):
-    if not CHANNEL_SECRET or not signature:
+    if not CHANNEL_SECRET:
         return False
 
     hash_value = hmac.new(
@@ -30,10 +30,33 @@ def verify_signature(body, signature):
 
     expected_signature = base64.b64encode(hash_value).decode("utf-8")
 
-    return hmac.compare_digest(expected_signature, signature)
+    return hmac.compare_digest(
+        expected_signature,
+        signature or ""
+    )
 
 
-def reply_message(reply_token, text):
+def is_spam(user_id):
+    now = time.time()
+
+    if user_id not in user_messages:
+        user_messages[user_id] = []
+
+    user_messages[user_id] = [
+        t
+        for t in user_messages[user_id]
+        if now - t < SPAM_WINDOW
+    ]
+
+    user_messages[user_id].append(now)
+
+    return len(user_messages[user_id]) > SPAM_LIMIT
+
+
+def reply_message(reply_token, message):
+    if not CHANNEL_ACCESS_TOKEN:
+        return
+
     url = "https://api.line.me/v2/bot/message/reply"
 
     headers = {
@@ -46,54 +69,32 @@ def reply_message(reply_token, text):
         "messages": [
             {
                 "type": "text",
-                "text": text
+                "text": message
             }
         ]
     }
 
-    response = requests.post(
+    requests.post(
         url,
         headers=headers,
         json=data,
         timeout=10
     )
 
-    response.raise_for_status()
-
-
-def is_spam(user_id):
-    now = time.time()
-
-    messages = user_messages.get(user_id, [])
-
-    messages = [
-        timestamp
-        for timestamp in messages
-        if now - timestamp < SPAM_WINDOW
-    ]
-
-    messages.append(now)
-    user_messages[user_id] = messages
-
-    return len(messages) > SPAM_LIMIT
-
-
-@app.route("/", methods=["GET"])
-def index():
-    return "LINE Protection Bot is running."
-
 
 @app.route("/callback", methods=["POST"])
 def callback():
     body = request.get_data()
-    signature = request.headers.get("X-Line-Signature", "")
+    signature = request.headers.get("X-Line-Signature")
 
     if not verify_signature(body, signature):
         abort(400)
 
-    events = request.get_json().get("events", [])
+    data = request.get_json(silent=True) or {}
+    events = data.get("events", [])
 
     for event in events:
+
         if event.get("type") != "message":
             continue
 
@@ -107,26 +108,27 @@ def callback():
 
         text = event["message"]["text"]
 
-    if is_spam(user_id):
-        if reply_token:
-            reply_message(
-                reply_token,
-                "⚠️ 短時間にたくさんのメッセージが送られています。少し時間をおいてください。"
-            )
-        continue
+        if is_spam(user_id):
+            if reply_token:
+                reply_message(
+                    reply_token,
+                    "⚠️ 短時間にたくさんのメッセージが送られています。少し時間をおいてください。"
+                )
+            continue
 
-    ng_words = [
-        "死ね",
-        "消えろ",
-        "殺す"
-    ]
+        ng_words = [
+            "死ね",
+            "消えろ",
+            "殺す"
+        ]
 
-    if any(word in text for word in ng_words):
-        if reply_token:
-            reply_message(
-                reply_token,
-                "⚠️ 不適切な言葉が検出されました。"
-            )
+        if any(word in text for word in ng_words):
+            if reply_token:
+                reply_message(
+                    reply_token,
+                    "⚠️ 不適切な言葉が検出されました。"
+                )
+            continue
 
     return "OK"
 
