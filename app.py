@@ -106,7 +106,78 @@ def callback():
         # グループメンバー退出検知
         # =====================================
 
-        if event_type == "memberLeft":
+        if event_type == "memberLeft":# ==============================
+# グループメンバーの追加・退会検知
+# ==============================
+
+# 強制退会として扱うユーザーIDを入れておく
+forced_leave_users = set()
+
+
+def get_user_name(user_id):
+    try:
+        profile = line_bot_api.get_group_member_profile(
+            event.source.group_id,
+            user_id
+        )
+        return profile.display_name
+    except Exception:
+        return "メンバー"
+
+
+# ==============================
+# メンバー追加
+# ==============================
+if event.type == "memberJoined":
+
+    for member in event.joined.members:
+
+        user_id = member.user_id
+        name = get_user_name(user_id)
+
+        message = (
+            "🟢 メンバー追加\n\n"
+            f"👤 {name}さんがグループに追加されました。"
+        )
+
+        line_bot_api.push_message(
+            event.source.group_id,
+            TextSendMessage(text=message)
+        )
+
+
+# ==============================
+# メンバー退会
+# ==============================
+elif event.type == "memberLeft":
+
+    for member in event.left.members:
+
+        user_id = member.user_id
+        name = get_user_name(user_id)
+
+        # 強制退会として登録されている場合
+        if user_id in forced_leave_users:
+
+            message = (
+                "🔴 強制退会\n\n"
+                f"👤 {name}さんがグループから強制退会されました。"
+            )
+
+            # 使い終わったら削除
+            forced_leave_users.discard(user_id)
+
+        else:
+
+            message = (
+                "🔵 退会\n\n"
+                f"👤 {name}さんがグループから退会しました。"
+            )
+
+        line_bot_api.push_message(
+            event.source.group_id,
+            TextSendMessage(text=message)
+        )
 
             reply_token = event.get("replyToken")
 
