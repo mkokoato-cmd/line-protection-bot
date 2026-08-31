@@ -37,7 +37,9 @@ def verify_signature(body, signature):
         hashlib.sha256
     ).digest()
 
-    expected_signature = base64.b64encode(hash_value).decode("utf-8")
+    expected_signature = base64.b64encode(
+        hash_value
+    ).decode("utf-8")
 
     return hmac.compare_digest(
         expected_signature,
@@ -80,12 +82,62 @@ def reply_message(reply_token, text):
 
 
 # ==========================================
+# グループへメッセージ送信
+# ==========================================
+
+def send_message(group_id, text):
+
+    if not group_id:
+        print("グループIDがありません")
+        return
+
+    url = f"{LINE_API}/message/push"
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+    }
+
+    data = {
+        "to": group_id,
+        "messages": [
+            {
+                "type": "text",
+                "text": text
+            }
+        ]
+    }
+
+    try:
+
+        response = requests.post(
+            url,
+            headers=headers,
+            json=data,
+            timeout=10
+        )
+
+        print("LINE push:", response.status_code)
+        print(response.text)
+
+    except Exception as e:
+
+        print("メッセージ送信エラー:", e)
+
+
+# ==========================================
 # ユーザー名取得
 # ==========================================
 
 def get_user_name(group_id, user_id):
 
-    url = f"{LINE_API}/group/{group_id}/member/{user_id}"
+    if not group_id or not user_id:
+        return "メンバー"
+
+    url = (
+        f"{LINE_API}/group/"
+        f"{group_id}/member/{user_id}"
+    )
 
     headers = {
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
@@ -128,9 +180,10 @@ def callback():
         "X-Line-Signature"
     )
 
-    # --------------------------------------
+
+    # ======================================
     # 署名チェック
-    # --------------------------------------
+    # ======================================
 
     if not verify_signature(
         body,
@@ -142,9 +195,9 @@ def callback():
         abort(400)
 
 
-    # --------------------------------------
+    # ======================================
     # JSON取得
-    # --------------------------------------
+    # ======================================
 
     try:
 
@@ -272,36 +325,28 @@ def callback():
 
 
                 message = (
-    "🛡️ 退会検知\n\n"
-    f"👤 {name}さんが\n"
-    "グループから退出しました。\n\n"
-    "⚠️ 強制退会・本人による退会の\n"
-    "判別はLINEのイベント情報から\n"
-    "できません。"
-)
+                    "🛡️ 退会検知\n\n"
+                    f"👤 {name}さんが\n"
+                    "グループから退出しました。\n\n"
+                    "⚠️ 強制退会・本人による退会の\n"
+                    "判別はLINEのイベント情報から\n"
+                    "できません。"
+                )
 
-if event_type == "memberLeft":
-    print("⚠️ メンバーがグループから退出しました")
 
-    send_message(
-        group_id,
-        "⚠️ メンバーがグループから退出しました。\n\n"
-        "※ 強制退会か本人による退会かは、"
-        "LINEのイベント情報から判別できません。"
-    )
+                if reply_token:
 
-if event_type == "memberJoined":
-    print("👤 メンバーがグループに追加されました")
+                    reply_message(
+                        reply_token,
+                        message
+                    )
 
-    send_message(
-        group_id,
-        "👤 新しいメンバーがグループに追加されました。"
-    )
+
         # ==================================
         # 通常メッセージ
-        
+        # ==================================
 
-elif event_type == "message":
+        elif event_type == "message":
 
             print(
                 "通常メッセージを受信しました"
@@ -312,7 +357,7 @@ elif event_type == "message":
     # LINEには必ず200を返す
     # ======================================
 
-return "OK", 200
+    return "OK", 200
 
 
 # ==========================================
