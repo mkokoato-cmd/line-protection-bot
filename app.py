@@ -290,8 +290,7 @@ if event_type == "memberLeft":
         "LINEのイベント情報から判別できません。"
     )
 
-if event_type == 
-"memberJoined":
+if event_type == "memberJoined":
     print("👤 メンバーがグループに追加されました")
 
     send_message(
