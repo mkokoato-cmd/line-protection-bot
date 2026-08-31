@@ -1,25 +1,34 @@
 import os
-import time
+import json
 import hmac
 import hashlib
 import base64
-import requests
 
 from flask import Flask, request, abort
 
+import requests
+
+
 app = Flask(__name__)
 
-CHANNEL_SECRET = os.environ.get("CHANNEL_SECRET", "")
-CHANNEL_ACCESS_TOKEN = os.environ.get("CHANNEL_ACCESS_TOKEN", "")
 
-SPAM_LIMIT = 5
-SPAM_WINDOW = 10
+# ==========================================
+# LINE設定
+# ==========================================
 
-user_messages = {}
+CHANNEL_SECRET = os.environ.get("CHANNEL_SECRET")
+CHANNEL_ACCESS_TOKEN = os.environ.get("CHANNEL_ACCESS_TOKEN")
 
+LINE_API = "https://api.line.me/v2/bot"
+
+
+# ==========================================
+# LINE署名チェック
+# ==========================================
 
 def verify_signature(body, signature):
-    if not CHANNEL_SECRET:
+
+    if not signature:
         return False
 
     hash_value = hmac.new(
@@ -32,35 +41,21 @@ def verify_signature(body, signature):
 
     return hmac.compare_digest(
         expected_signature,
-        signature or ""
+        signature
     )
 
 
-def is_spam(user_id):
-    now = time.time()
+# ==========================================
+# LINEへ返信
+# ==========================================
 
-    if user_id not in user_messages:
-        user_messages[user_id] = []
+def reply_message(reply_token, text):
 
-    user_messages[user_id] = [
-        t for t in user_messages[user_id]
-        if now - t < SPAM_WINDOW
-    ]
-
-    user_messages[user_id].append(now)
-
-    return len(user_messages[user_id]) > SPAM_LIMIT
-
-
-def reply_message(reply_token, message):
-    if not CHANNEL_ACCESS_TOKEN:
-        return
-
-    url = "https://api.line.me/v2/bot/message/reply"
+    url = f"{LINE_API}/message/reply"
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": "Bearer " + CHANNEL_ACCESS_TOKEN
+        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
     }
 
     data = {
@@ -68,18 +63,61 @@ def reply_message(reply_token, message):
         "messages": [
             {
                 "type": "text",
-                "text": message
+                "text": text
             }
         ]
     }
 
-    requests.post(
+    response = requests.post(
         url,
         headers=headers,
         json=data,
         timeout=10
     )
 
+    print("LINE reply:", response.status_code)
+    print(response.text)
+
+
+# ==========================================
+# ユーザー名取得
+# ==========================================
+
+def get_user_name(group_id, user_id):
+
+    url = f"{LINE_API}/group/{group_id}/member/{user_id}"
+
+    headers = {
+        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+    }
+
+    try:
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=10
+        )
+
+        if response.status_code == 200:
+
+            data = response.json()
+
+            return data.get(
+                "displayName",
+                "メンバー"
+            )
+
+    except Exception as e:
+
+        print("名前取得エラー:", e)
+
+    return "メンバー"
+
+
+# ==========================================
+# Webhook
+# ==========================================
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -87,174 +125,196 @@ def callback():
     body = request.get_data()
 
     signature = request.headers.get(
-        "X-Line-Signature",
-        ""
+        "X-Line-Signature"
     )
 
-    if not verify_signature(body, signature):
+    # --------------------------------------
+    # 署名チェック
+    # --------------------------------------
+
+    if not verify_signature(
+        body,
+        signature
+    ):
+
+        print("署名チェック失敗")
+
         abort(400)
 
-    data = request.get_json(silent=True) or {}
 
-    events = data.get("events", [])
+    # --------------------------------------
+    # JSON取得
+    # --------------------------------------
+
+    try:
+
+        data = json.loads(
+            body.decode("utf-8")
+        )
+
+    except Exception:
+
+        abort(400)
+
+
+    events = data.get(
+        "events",
+        []
+    )
+
+
+    print("受信イベント:", events)
+
+
+    # ======================================
+    # イベント処理
+    # ======================================
 
     for event in events:
 
-        event_type = event.get("type")
-
-        # =====================================
-        # グループメンバー退出検知
-        # =====================================
-
-        if event_type == "memberLeft":# ==============================
-# グループメンバーの追加・退会検知
-# ==============================
-
-# 強制退会として扱うユーザーIDを入れておく
-forced_leave_users = set()
-
-
-def get_user_name(user_id):
-    try:
-        profile = line_bot_api.get_group_member_profile(
-            event.source.group_id,
-            user_id
-        )
-        return profile.display_name
-    except Exception:
-        return "メンバー"
-
-
-# ==============================
-# メンバー追加
-# ==============================
-if event.type == "memberJoined":
-
-    for member in event.joined.members:
-
-        user_id = member.user_id
-        name = get_user_name(user_id)
-
-        message = (
-            "🟢 メンバー追加\n\n"
-            f"👤 {name}さんがグループに追加されました。"
+        event_type = event.get(
+            "type"
         )
 
-        line_bot_api.push_message(
-            event.source.group_id,
-            TextSendMessage(text=message)
+        reply_token = event.get(
+            "replyToken"
+        )
+
+        source = event.get(
+            "source",
+            {}
+        )
+
+        group_id = source.get(
+            "groupId"
         )
 
 
-# ==============================
-# メンバー退会
-# ==============================
-elif event.type == "memberLeft":
+        # ==================================
+        # メンバー追加
+        # ==================================
 
-    for member in event.left.members:
+        if event_type == "memberJoined":
 
-        user_id = member.user_id
-        name = get_user_name(user_id)
-
-        # 強制退会として登録されている場合
-        if user_id in forced_leave_users:
-
-            message = (
-                "🔴 強制退会\n\n"
-                f"👤 {name}さんがグループから強制退会されました。"
+            joined = event.get(
+                "joined",
+                {}
             )
 
-            # 使い終わったら削除
-            forced_leave_users.discard(user_id)
-
-        else:
-
-            message = (
-                "🔵 退会\n\n"
-                f"👤 {name}さんがグループから退会しました。"
+            members = joined.get(
+                "members",
+                []
             )
 
-        line_bot_api.push_message(
-            event.source.group_id,
-            TextSendMessage(text=message)
-        )
 
-            reply_token = event.get("replyToken")
+            for member in members:
 
-            if reply_token:
-                reply_message(
-                    reply_token,
-                    "🚨 メンバー退出を検知しました。\n"
-                    "グループからメンバーが退出しました。"
+                user_id = member.get(
+                    "userId"
                 )
 
-            continue
+                if not user_id:
+                    continue
 
-        # =====================================
-        # メッセージ以外は無視
-        # =====================================
 
-        if event_type != "message":
-            continue
-
-        message = event.get("message", {})
-
-        if message.get("type") != "text":
-            continue
-
-        reply_token = event.get("replyToken")
-
-        source = event.get("source", {})
-
-        user_id = source.get(
-            "userId",
-            "unknown"
-        )
-
-        text = message.get("text", "")
-
-        # =====================================
-        # スパム検知
-        # =====================================
-
-        if is_spam(user_id):
-
-            if reply_token:
-                reply_message(
-                    reply_token,
-                    "⚠️ 短時間にたくさんのメッセージが送られています。"
-                    " 少し時間をおいてください。"
+                name = get_user_name(
+                    group_id,
+                    user_id
                 )
 
-            continue
 
-        # =====================================
-        # 不適切な言葉の検知
-        # =====================================
-
-        ng_words = [
-            "死ね",
-            "消えろ",
-            "殺す"
-        ]
-
-        if any(word in text for word in ng_words):
-
-            if reply_token:
-                reply_message(
-                    reply_token,
-                    "⚠️ 不適切な言葉が検出されました。"
+                message = (
+                    "🟢 メンバー追加\n\n"
+                    f"👤 {name}さんが\n"
+                    "グループに追加されました。"
                 )
 
-            continue
 
-    return "OK"
+                if reply_token:
 
+                    reply_message(
+                        reply_token,
+                        message
+                    )
+
+
+        # ==================================
+        # メンバー退会
+        # ==================================
+
+        elif event_type == "memberLeft":
+
+            left = event.get(
+                "left",
+                {}
+            )
+
+            members = left.get(
+                "members",
+                []
+            )
+
+
+            for member in members:
+
+                user_id = member.get(
+                    "userId"
+                )
+
+                if not user_id:
+                    continue
+
+
+                name = get_user_name(
+                    group_id,
+                    user_id
+                )
+
+
+                message = (
+                    "🔵 メンバー退会\n\n"
+                    f"👤 {name}さんが\n"
+                    "グループから退会しました。"
+                )
+
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        message
+                    )
+
+
+        # ==================================
+        # 通常メッセージ
+        # ==================================
+
+        elif event_type == "message":
+
+            print(
+                "通常メッセージを受信しました"
+            )
+
+
+    # ======================================
+    # LINEには必ず200を返す
+    # ======================================
+
+    return "OK", 200
+
+
+# ==========================================
+# Render起動
+# ==========================================
 
 if __name__ == "__main__":
 
     port = int(
-        os.environ.get("PORT", 8080)
+        os.environ.get(
+            "PORT",
+            10000
+        )
     )
 
     app.run(
