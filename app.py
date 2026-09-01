@@ -33,10 +33,7 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 # 荒らし対策設定
 # ==========================================
 
-# 何回連続したらスパムと判定するか
 SPAM_LIMIT = 5
-
-# 何秒以内の連投を数えるか
 SPAM_WINDOW = 10
 
 
@@ -44,14 +41,18 @@ SPAM_WINDOW = 10
 # ユーザー記録
 # ==========================================
 
-# {
-#   "LINEユーザーID": {
-#       "name": "名前",
-#       "messages": [時刻, 時刻, ...]
-#   }
-# }
-
 users = {}
+
+
+# ==========================================
+# 追い出し記録
+# ==========================================
+
+# グループごとの追い出し人数を記録
+kick_records = {}
+
+# 追い出し記録を何秒保持するか
+KICK_WINDOW = 60
 
 
 # ==========================================
@@ -92,9 +93,11 @@ def reply_message(reply_token, text):
         return
 
     if not CHANNEL_ACCESS_TOKEN:
+
         print(
             "CHANNEL_ACCESS_TOKEN が設定されていません"
         )
+
         return
 
     headers = {
@@ -323,37 +326,49 @@ def check_spam(user_id):
 
     messages = users[user_id]["messages"]
 
-
-    # --------------------------------------
-    # 古い記録を削除
-    # --------------------------------------
-
     messages[:] = [
         t
         for t in messages
         if now - t <= SPAM_WINDOW
     ]
 
-
-    # --------------------------------------
-    # 今回のメッセージを追加
-    # --------------------------------------
-
     messages.append(now)
-
-
-    # --------------------------------------
-    # スパム判定
-    # --------------------------------------
 
     if len(messages) >= SPAM_LIMIT:
 
-        # 一度通知したらリセット
         users[user_id]["messages"] = []
 
         return True
 
     return False
+
+
+# ==========================================
+# 追い出し警告
+# ==========================================
+
+def register_kick(group_id):
+
+    now = time.time()
+
+    if not group_id:
+        return 1
+
+    if group_id not in kick_records:
+
+        kick_records[group_id] = []
+
+    # 古い記録を削除
+    kick_records[group_id] = [
+        t
+        for t in kick_records[group_id]
+        if now - t <= KICK_WINDOW
+    ]
+
+    # 今回の退出を追加
+    kick_records[group_id].append(now)
+
+    return len(kick_records[group_id])
 
 
 # ==========================================
@@ -460,14 +475,8 @@ def webhook():
                 "type"
             )
 
-
-            # --------------------------------
-            # テキストだけ対象
-            # --------------------------------
-
             if message_type != "text":
                 continue
-
 
             text = message.get(
                 "text",
@@ -480,7 +489,6 @@ def webhook():
             # --------------------------------
 
             user_name = "不明"
-
 
             if group_id and user_id:
 
@@ -498,7 +506,7 @@ def webhook():
 
 
             # --------------------------------
-            # 名前を保存
+            # 名前保存
             # --------------------------------
 
             save_user_name(
@@ -513,11 +521,6 @@ def webhook():
 
             if check_spam(user_id):
 
-
-                # =================================
-                # LINEへ荒らしの名前を通知
-                # =================================
-
                 line_message = (
                     "🚨 荒らし・スパムを検知しました。\n\n"
                     f"👤 名前：{user_name}\n"
@@ -531,18 +534,18 @@ def webhook():
                 )
 
 
-                # =================================
-                # グループ名取得
-                # =================================
+                # --------------------------------
+                # グループ名
+                # --------------------------------
 
                 group_name = get_group_name(
                     group_id
                 )
 
 
-                # =================================
+                # --------------------------------
                 # Discord通知
-                # =================================
+                # --------------------------------
 
                 discord_message = (
                     "🚨 **スパム・荒らし検知**\n\n"
@@ -664,6 +667,25 @@ def webhook():
             )
 
 
+            # --------------------------------
+            # 今回の退出人数
+            # --------------------------------
+
+            left_count = len(members)
+
+            if left_count == 0:
+                continue
+
+
+            # --------------------------------
+            # 追い出し人数を記録
+            # --------------------------------
+
+            kick_count = register_kick(
+                group_id
+            )
+
+
             for member in members:
 
                 left_user_id = member.get(
@@ -676,7 +698,6 @@ def webhook():
                 # --------------------------------
 
                 user_name = "不明"
-
 
                 if left_user_id in users:
 
@@ -706,7 +727,7 @@ def webhook():
 
 
                 # --------------------------------
-                # LINE通知
+                # 通常の退出通知
                 # --------------------------------
 
                 if reply_token:
@@ -721,17 +742,44 @@ def webhook():
 
 
                 # --------------------------------
+                # 荒らし警告
+                # 1人でも警告
+                # --------------------------------
+
+                warning_message = (
+                    "🚨🚨【荒らし行為を検知】\n"
+                    f"👤 実行者：不明\n"
+                    f"👥 追い出し人数：{kick_count}人\n"
+                    "⚠️ 荒らしの可能性があります！"
+                )
+
+
+                # --------------------------------
+                # LINE警告
+                # --------------------------------
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        warning_message
+                    )
+
+
+                # --------------------------------
                 # Discord通知
                 # --------------------------------
 
                 discord_message = (
-                    "🔴 **メンバー退出・追い出し検知**\n\n"
+                    "🚨🚨 **荒らし行為を検知**\n\n"
+                    f"👤 実行者：**不明**\n"
                     f"👤 退出した人：**{user_name}**\n"
                     f"🆔 User ID：{left_user_id}\n"
-                    f"👥 グループ：{group_name}\n\n"
-                    "⚠️ 強制退会または自分から退会した可能性があります。\n"
+                    f"👥 追い出し人数：**{kick_count}人**\n"
+                    f"🏠 グループ：{group_name}\n\n"
+                    "⚠️ 荒らしの可能性があります！\n\n"
                     "※ LINEの仕様上、このイベントだけでは\n"
-                    "「誰が追い出したか」は取得できません。"
+                    "誰が追い出したかは取得できません。"
                 )
 
                 send_discord(
