@@ -50,6 +50,7 @@ SPAM_WINDOW = 10
 #       "messages": [時刻, 時刻, ...]
 #   }
 # }
+
 users = {}
 
 
@@ -90,6 +91,10 @@ def reply_message(reply_token, text):
     if not reply_token:
         return
 
+    if not CHANNEL_ACCESS_TOKEN:
+        print("CHANNEL_ACCESS_TOKEN が設定されていません")
+        return
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
@@ -106,15 +111,28 @@ def reply_message(reply_token, text):
     }
 
     try:
-        requests.post(
+
+        response = requests.post(
             f"{LINE_API}/message/reply",
             headers=headers,
             json=data,
             timeout=10
         )
 
+        if response.status_code != 200:
+
+            print(
+                "LINE返信失敗:",
+                response.status_code,
+                response.text
+            )
+
     except Exception as e:
-        print("LINE返信エラー:", e)
+
+        print(
+            "LINE返信エラー:",
+            e
+        )
 
 
 # ==========================================
@@ -124,6 +142,9 @@ def reply_message(reply_token, text):
 def get_user_profile(group_id, user_id):
 
     if not group_id or not user_id:
+        return None
+
+    if not CHANNEL_ACCESS_TOKEN:
         return None
 
     headers = {
@@ -145,9 +166,7 @@ def get_user_profile(group_id, user_id):
 
         if response.status_code == 200:
 
-            data = response.json()
-
-            return data
+            return response.json()
 
         print(
             "プロフィール取得失敗:",
@@ -172,6 +191,9 @@ def get_user_profile(group_id, user_id):
 def get_group_name(group_id):
 
     if not group_id:
+        return "不明なグループ"
+
+    if not CHANNEL_ACCESS_TOKEN:
         return "不明なグループ"
 
     headers = {
@@ -200,6 +222,12 @@ def get_group_name(group_id):
                 "不明なグループ"
             )
 
+        print(
+            "グループ名取得失敗:",
+            response.status_code,
+            response.text
+        )
+
     except Exception as e:
 
         print(
@@ -217,9 +245,11 @@ def get_group_name(group_id):
 def send_discord(message):
 
     if not DISCORD_WEBHOOK_URL:
+
         print(
             "DISCORD_WEBHOOK_URL が設定されていません"
         )
+
         return
 
     data = {
@@ -279,6 +309,9 @@ def check_spam(user_id):
 
     now = time.time()
 
+    if not user_id:
+        return False
+
     if user_id not in users:
 
         users[user_id] = {
@@ -288,16 +321,26 @@ def check_spam(user_id):
 
     messages = users[user_id]["messages"]
 
+    # --------------------------------------
     # 古い記録を削除
+    # --------------------------------------
+
     messages[:] = [
-        t for t in messages
+        t
+        for t in messages
         if now - t <= SPAM_WINDOW
     ]
 
+    # --------------------------------------
     # 今回のメッセージを追加
+    # --------------------------------------
+
     messages.append(now)
 
-    # 制限回数以上ならスパム
+    # --------------------------------------
+    # スパム判定
+    # --------------------------------------
+
     if len(messages) >= SPAM_LIMIT:
 
         # 一度通知したらリセット
@@ -324,9 +367,10 @@ def webhook():
         "X-Line-Signature"
     )
 
-    # --------------------------------------
+
+    # ======================================
     # 署名チェック
-    # --------------------------------------
+    # ======================================
 
     if not verify_signature(
         body,
@@ -338,9 +382,9 @@ def webhook():
         abort(400)
 
 
-    # --------------------------------------
+    # ======================================
     # JSON解析
-    # --------------------------------------
+    # ======================================
 
     try:
 
@@ -348,7 +392,12 @@ def webhook():
             body.decode("utf-8")
         )
 
-    except Exception:
+    except Exception as e:
+
+        print(
+            "JSON解析エラー:",
+            e
+        )
 
         abort(400)
 
@@ -443,7 +492,10 @@ def webhook():
                     )
 
 
+            # --------------------------------
             # 名前を保存
+            # --------------------------------
+
             save_user_name(
                 user_id,
                 user_name
@@ -456,24 +508,40 @@ def webhook():
 
             if check_spam(user_id):
 
-                # LINE警告
+
+                # =================================
+                # LINEへ荒らしの名前を通知
+                # =================================
+
+                line_message = (
+                    "🚨 荒らし・スパムを検知しました。\n\n"
+                    f"👤 名前：{user_name}\n"
+                    f"🆔 User ID：{user_id}\n\n"
+                    "⚠️ 連続投稿をやめてください。"
+                )
+
                 reply_message(
                     reply_token,
-                    "⚠️ 荒らし・連投を検知しました。\n"
-                    "連続投稿をやめてください。"
+                    line_message
                 )
 
 
-                # グループ名
+                # =================================
+                # グループ名取得
+                # =================================
+
                 group_name = get_group_name(
                     group_id
                 )
 
 
+                # =================================
                 # Discord通知
+                # =================================
+
                 discord_message = (
                     "🚨 **スパム・荒らし検知**\n\n"
-                    f"👤 ユーザー：{user_name}\n"
+                    f"👤 ユーザー：**{user_name}**\n"
                     f"🆔 User ID：{user_id}\n"
                     f"👥 グループ：{group_name}\n"
                     f"💬 内容：{text[:500]}"
@@ -514,7 +582,10 @@ def webhook():
                 user_name = "不明"
 
 
+                # --------------------------------
                 # プロフィール取得
+                # --------------------------------
+
                 profile = get_user_profile(
                     group_id,
                     joined_user_id
@@ -528,14 +599,20 @@ def webhook():
                     )
 
 
+                # --------------------------------
                 # 名前保存
+                # --------------------------------
+
                 save_user_name(
                     joined_user_id,
                     user_name
                 )
 
 
+                # --------------------------------
                 # LINE通知
+                # --------------------------------
+
                 if reply_token:
 
                     reply_message(
@@ -545,10 +622,13 @@ def webhook():
                     )
 
 
+                # --------------------------------
                 # Discord通知
+                # --------------------------------
+
                 discord_message = (
                     "🟢 **メンバー追加検知**\n\n"
-                    f"👤 追加された人：{user_name}\n"
+                    f"👤 追加された人：**{user_name}**\n"
                     f"🆔 User ID：{joined_user_id}\n"
                     f"👥 グループ：{group_name}"
                 )
@@ -587,7 +667,7 @@ def webhook():
 
 
                 # --------------------------------
-                # まず保存していた名前を探す
+                # 保存していた名前を探す
                 # --------------------------------
 
                 user_name = "不明"
@@ -621,7 +701,7 @@ def webhook():
 
 
                 # --------------------------------
-                # LINEへ通知
+                # LINE通知
                 # --------------------------------
 
                 if reply_token:
@@ -634,7 +714,7 @@ def webhook():
 
 
                 # --------------------------------
-                # Discordへ通知
+                # Discord通知
                 # --------------------------------
 
                 discord_message = (
@@ -647,14 +727,13 @@ def webhook():
                     "「誰が追い出したか」は取得できません。"
                 )
 
-
                 send_discord(
                     discord_message
                 )
 
 
     # ======================================
-    # LINEへ正常終了を返す
+    # LINEへ正常終了
     # ======================================
 
     return "OK", 200
