@@ -17,8 +17,13 @@ app = Flask(__name__)
 # LINE設定
 # ==========================================
 
-CHANNEL_SECRET = os.environ.get("CHANNEL_SECRET")
-CHANNEL_ACCESS_TOKEN = os.environ.get("CHANNEL_ACCESS_TOKEN")
+CHANNEL_SECRET = os.environ.get(
+    "CHANNEL_SECRET"
+)
+
+CHANNEL_ACCESS_TOKEN = os.environ.get(
+    "CHANNEL_ACCESS_TOKEN"
+)
 
 LINE_API = "https://api.line.me/v2/bot"
 
@@ -27,13 +32,18 @@ LINE_API = "https://api.line.me/v2/bot"
 # 荒らし検知設定
 # ==========================================
 
-# 何分以内に何人退会したら警報を出すか
+# 何秒以内に
+# 何人退会したら警報を出すか
+
 KICK_DETECTION_SECONDS = 10 * 60
 
 KICK_DETECTION_COUNT = 2
 
 
-# グループごとの退会記録
+# ==========================================
+# グループごとの退会履歴
+# ==========================================
+
 leave_history = {}
 
 
@@ -44,6 +54,9 @@ leave_history = {}
 def verify_signature(body, signature):
 
     if not signature:
+        return False
+
+    if not CHANNEL_SECRET:
         return False
 
     hash_value = hmac.new(
@@ -63,7 +76,7 @@ def verify_signature(body, signature):
 
 
 # ==========================================
-# LINE返信
+# LINE返信メッセージ
 # ==========================================
 
 def reply_message(reply_token, text):
@@ -71,7 +84,9 @@ def reply_message(reply_token, text):
     if not reply_token:
         return
 
-    url = f"{LINE_API}/message/reply"
+    url = (
+        f"{LINE_API}/message/reply"
+    )
 
     headers = {
         "Content-Type": "application/json",
@@ -117,7 +132,7 @@ def reply_message(reply_token, text):
 
 
 # ==========================================
-# LINE Push
+# LINEプッシュメッセージ
 # ==========================================
 
 def push_message(group_id, text):
@@ -125,7 +140,9 @@ def push_message(group_id, text):
     if not group_id:
         return
 
-    url = f"{LINE_API}/message/push"
+    url = (
+        f"{LINE_API}/message/push"
+    )
 
     headers = {
         "Content-Type": "application/json",
@@ -165,7 +182,7 @@ def push_message(group_id, text):
     except Exception as e:
 
         print(
-            "メッセージ送信エラー:",
+            "プッシュ送信エラー:",
             e
         )
 
@@ -176,12 +193,16 @@ def push_message(group_id, text):
 
 def get_user_name(group_id, user_id):
 
-    if not group_id or not user_id:
+    if not group_id:
+        return "メンバー"
+
+    if not user_id:
         return "メンバー"
 
     url = (
         f"{LINE_API}/group/"
-        f"{group_id}/member/{user_id}"
+        f"{group_id}/member/"
+        f"{user_id}"
     )
 
     headers = {
@@ -207,6 +228,11 @@ def get_user_name(group_id, user_id):
                 "メンバー"
             )
 
+        print(
+            "名前取得失敗:",
+            response.status_code
+        )
+
     except Exception as e:
 
         print(
@@ -228,34 +254,69 @@ def check_mass_leave(group_id):
 
     now = time.time()
 
+
+    # --------------------------------------
+    # 初回
+    # --------------------------------------
+
     if group_id not in leave_history:
 
         leave_history[group_id] = []
 
-    # 古い記録を削除
-    leave_history[group_id] = [
-        timestamp
-        for timestamp
-        in leave_history[group_id]
-        if now - timestamp
-        <= KICK_DETECTION_SECONDS
-    ]
 
+    # --------------------------------------
+    # 10分より古い記録を削除
+    # --------------------------------------
+
+    new_history = []
+
+    for timestamp in leave_history[group_id]:
+
+        if (
+            now - timestamp
+            <= KICK_DETECTION_SECONDS
+        ):
+
+            new_history.append(
+                timestamp
+            )
+
+
+    leave_history[group_id] = (
+        new_history
+    )
+
+
+    # --------------------------------------
     # 今回の退会を追加
-    leave_history[group_id].append(now)
+    # --------------------------------------
+
+    leave_history[group_id].append(
+        now
+    )
+
 
     print(
-        "退会人数:",
+        "退会検知数:",
         len(leave_history[group_id])
     )
 
-    # 2人以上なら荒らし警報
-    if len(leave_history[group_id]) >= KICK_DETECTION_COUNT:
 
-        # 警報を出したら一度リセット
+    # --------------------------------------
+    # 2人以上なら荒らし警報
+    # --------------------------------------
+
+    if (
+        len(leave_history[group_id])
+        >= KICK_DETECTION_COUNT
+    ):
+
+        # 警報後にリセット
+
         leave_history[group_id] = []
 
         return True
+
 
     return False
 
@@ -264,10 +325,18 @@ def check_mass_leave(group_id):
 # Webhook
 # ==========================================
 
-@app.route("/callback", methods=["POST"])
+@app.route(
+    "/callback",
+    methods=["POST"]
+)
 def callback():
 
     body = request.get_data()
+
+
+    # ======================================
+    # LINE署名
+    # ======================================
 
     signature = request.headers.get(
         "X-Line-Signature"
@@ -291,7 +360,7 @@ def callback():
 
 
     # ======================================
-    # JSON取得
+    # JSON読み込み
     # ======================================
 
     try:
@@ -300,10 +369,19 @@ def callback():
             body.decode("utf-8")
         )
 
-    except Exception:
+    except Exception as e:
+
+        print(
+            "JSONエラー:",
+            e
+        )
 
         abort(400)
 
+
+    # ======================================
+    # イベント取得
+    # ======================================
 
     events = data.get(
         "events",
@@ -327,14 +405,17 @@ def callback():
             "type"
         )
 
+
         reply_token = event.get(
             "replyToken"
         )
+
 
         source = event.get(
             "source",
             {}
         )
+
 
         group_id = source.get(
             "groupId"
@@ -347,10 +428,16 @@ def callback():
 
         if event_type == "memberJoined":
 
+            print(
+                "メンバー追加イベント"
+            )
+
+
             joined = event.get(
                 "joined",
                 {}
             )
+
 
             members = joined.get(
                 "members",
@@ -363,6 +450,7 @@ def callback():
                 user_id = member.get(
                     "userId"
                 )
+
 
                 if not user_id:
                     continue
@@ -381,6 +469,9 @@ def callback():
                 )
 
 
+                # memberJoinedは
+                # replyTokenがあるため返信
+
                 if reply_token:
 
                     reply_message(
@@ -395,10 +486,16 @@ def callback():
 
         elif event_type == "memberLeft":
 
+            print(
+                "⚠️ メンバー退会イベント"
+            )
+
+
             left = event.get(
                 "left",
                 {}
             )
+
 
             members = left.get(
                 "members",
@@ -412,48 +509,60 @@ def callback():
                     "userId"
                 )
 
+
                 if not user_id:
                     continue
 
 
-                name = get_user_name(
-                    group_id,
+                print(
+                    "退会ユーザー:",
                     user_id
                 )
 
 
-                # ==========================
-                # 通常の退会通知
-                # ==========================
+                # ==================================
+                # 退会通知
+                # ==================================
 
                 message = (
-                    "🛡️ 退会検知\n\n"
-                    f"👤 {name}さんが\n"
-                    "グループから退出しました。\n\n"
-                    "⚠️ 強制退会か本人退会かは\n"
-                    "LINEのイベント情報から\n"
-                    "判別できません。"
+                    "🛡️ 蹴り保護Bot\n\n"
+                    "⚠️ メンバーの退会を検知しました。\n\n"
+                    "🚨 グループからメンバーが\n"
+                    "退出・削除された可能性があります。\n\n"
+                    "※LINEの仕様上、\n"
+                    "誰が削除したかは\n"
+                    "Botから判別できません。"
                 )
 
 
-                if reply_token:
+                # ==================================
+                # ★重要★
+                # memberLeftはPush送信
+                # ==================================
 
-                    reply_message(
-                        reply_token,
-                        message
-                    )
+                push_message(
+                    group_id,
+                    message
+                )
 
 
-                # ==========================
+                # ==================================
                 # 荒らし検知
-                # ==========================
+                # ==================================
 
-                is_mass_leave = check_mass_leave(
-                    group_id
+                is_mass_leave = (
+                    check_mass_leave(
+                        group_id
+                    )
                 )
 
 
                 if is_mass_leave:
+
+                    print(
+                        "🚨 荒らし警報発動"
+                    )
+
 
                     alert_message = (
                         "🚨🚨 荒らし警報 🚨🚨\n\n"
@@ -465,7 +574,7 @@ def callback():
                         "👑 管理者はグループを\n"
                         "確認してください。\n\n"
                         "※LINEの仕様上、\n"
-                        "誰が退会させたかは\n"
+                        "誰が削除したかは\n"
                         "Botから判別できません。"
                     )
 
@@ -487,8 +596,20 @@ def callback():
             )
 
 
+        # ==================================
+        # その他
+        # ==================================
+
+        else:
+
+            print(
+                "その他のイベント:",
+                event_type
+            )
+
+
     # ======================================
-    # LINEには必ず200を返す
+    # LINEへ200を返す
     # ======================================
 
     return "OK", 200
@@ -506,6 +627,7 @@ if __name__ == "__main__":
             10000
         )
     )
+
 
     app.run(
         host="0.0.0.0",
