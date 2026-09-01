@@ -28,6 +28,15 @@ LINE_API = "https://api.line.me/v2/bot"
 
 
 # ==========================================
+# Discord設定
+# ==========================================
+
+DISCORD_WEBHOOK_URL = os.environ.get(
+    "DISCORD_WEBHOOK_URL"
+)
+
+
+# ==========================================
 # 荒らし検知設定
 # ==========================================
 
@@ -35,7 +44,6 @@ LINE_API = "https://api.line.me/v2/bot"
 # 別々の2人以上の退会を検知したら警報
 
 DETECTION_TIME = 10 * 60
-
 DETECTION_COUNT = 2
 
 
@@ -43,11 +51,10 @@ DETECTION_COUNT = 2
 # スパム検知設定
 # ==========================================
 
-# 同じ人が短時間に同じ内容を
-# 5回以上送信したらスパム警告
+# 同じ人が30秒以内に
+# 同じ内容を5回以上送信したら警告
 
 SPAM_TIME = 30
-
 SPAM_COUNT = 5
 
 
@@ -102,9 +109,10 @@ def reply_message(reply_token, text):
     if not reply_token:
         return
 
-    url = (
-        f"{LINE_API}/message/reply"
-    )
+    if not CHANNEL_ACCESS_TOKEN:
+        return
+
+    url = f"{LINE_API}/message/reply"
 
     headers = {
         "Content-Type": "application/json",
@@ -158,9 +166,10 @@ def push_message(group_id, text):
     if not group_id:
         return
 
-    url = (
-        f"{LINE_API}/message/push"
-    )
+    if not CHANNEL_ACCESS_TOKEN:
+        return
+
+    url = f"{LINE_API}/message/push"
 
     headers = {
         "Content-Type": "application/json",
@@ -206,6 +215,47 @@ def push_message(group_id, text):
 
 
 # ==========================================
+# Discord通知
+# ==========================================
+
+def discord_message(text):
+
+    if not DISCORD_WEBHOOK_URL:
+        print(
+            "Discord Webhook URLが設定されていません"
+        )
+        return
+
+    data = {
+        "content": text
+    }
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
+        print(
+            "Discord通知:",
+            response.status_code
+        )
+
+        print(
+            response.text
+        )
+
+    except Exception as e:
+
+        print(
+            "Discord通知エラー:",
+            e
+        )
+
+
+# ==========================================
 # 荒らし検知
 # ==========================================
 
@@ -214,8 +264,10 @@ def check_leave(group_id, user_id):
     if not group_id:
         return False
 
-    now = time.time()
+    if not user_id:
+        return False
 
+    now = time.time()
 
     # --------------------------------------
     # グループ初回
@@ -225,27 +277,29 @@ def check_leave(group_id, user_id):
 
         leave_history[group_id] = []
 
-
     # --------------------------------------
     # 古い記録を削除
     # --------------------------------------
 
     leave_history[group_id] = [
+
         item
+
         for item in leave_history[group_id]
+
         if now - item["time"] <= DETECTION_TIME
     ]
 
-
     # --------------------------------------
-    # 同じ人がすでに記録されているか確認
+    # 同じ人がすでに記録されているか
     # --------------------------------------
 
     already_recorded = any(
+
         item["user_id"] == user_id
+
         for item in leave_history[group_id]
     )
-
 
     # --------------------------------------
     # 同じ人なら重複カウントしない
@@ -259,7 +313,6 @@ def check_leave(group_id, user_id):
 
         return False
 
-
     # --------------------------------------
     # 今回の退会を記録
     # --------------------------------------
@@ -271,33 +324,24 @@ def check_leave(group_id, user_id):
         }
     )
 
-
     print(
-        "現在の退会人数:",
+        "現在の別ユーザー退会人数:",
         len(leave_history[group_id])
     )
-
 
     # --------------------------------------
     # 2人以上なら警報
     # --------------------------------------
 
-    if (
-        len(leave_history[group_id])
-        >= DETECTION_COUNT
-    ):
+    if len(leave_history[group_id]) >= DETECTION_COUNT:
 
         print(
             "🚨 荒らし警報発動"
         )
 
-
-        # 警報後リセット
-
         leave_history[group_id] = []
 
         return True
-
 
     return False
 
@@ -317,9 +361,7 @@ def check_spam(group_id, user_id, text):
     if not text:
         return False
 
-
     now = time.time()
-
 
     # --------------------------------------
     # グループ初回
@@ -329,7 +371,6 @@ def check_spam(group_id, user_id, text):
 
         spam_history[group_id] = {}
 
-
     # --------------------------------------
     # ユーザー初回
     # --------------------------------------
@@ -337,7 +378,6 @@ def check_spam(group_id, user_id, text):
     if user_id not in spam_history[group_id]:
 
         spam_history[group_id][user_id] = []
-
 
     # --------------------------------------
     # 古い記録を削除
@@ -352,7 +392,6 @@ def check_spam(group_id, user_id, text):
         if now - item["time"] <= SPAM_TIME
     ]
 
-
     # --------------------------------------
     # 今回のメッセージを記録
     # --------------------------------------
@@ -363,7 +402,6 @@ def check_spam(group_id, user_id, text):
             "time": now
         }
     )
-
 
     # --------------------------------------
     # 同じ内容だけ取り出す
@@ -378,12 +416,10 @@ def check_spam(group_id, user_id, text):
         if item["text"] == text
     ]
 
-
     print(
         "同じ内容の送信回数:",
         len(same_messages)
     )
-
 
     # --------------------------------------
     # 5回以上ならスパム
@@ -391,13 +427,9 @@ def check_spam(group_id, user_id, text):
 
     if len(same_messages) >= SPAM_COUNT:
 
-        # 警告後リセット
-
         spam_history[group_id][user_id] = []
 
-
         return True
-
 
     return False
 
@@ -418,7 +450,6 @@ def callback():
         "X-Line-Signature"
     )
 
-
     # ======================================
     # 署名チェック
     # ======================================
@@ -433,7 +464,6 @@ def callback():
         )
 
         abort(400)
-
 
     # ======================================
     # JSON
@@ -454,18 +484,15 @@ def callback():
 
         abort(400)
 
-
     events = data.get(
         "events",
         []
     )
 
-
     print(
         "受信イベント:",
         events
     )
-
 
     # ======================================
     # イベント処理
@@ -490,7 +517,6 @@ def callback():
             "groupId"
         )
 
-
         # ==================================
         # メンバー追加
         # ==================================
@@ -500,7 +526,6 @@ def callback():
             print(
                 "🟢 メンバー追加検知"
             )
-
 
             joined = event.get(
                 "joined",
@@ -512,7 +537,6 @@ def callback():
                 []
             )
 
-
             for member in members:
 
                 user_id = member.get(
@@ -522,21 +546,21 @@ def callback():
                 if not user_id:
                     continue
 
-
                 message = (
                     "🟢 メンバー追加\n\n"
                     "👤 新しいメンバーが\n"
                     "グループに追加されました。"
                 )
 
+                push_message(
+                    group_id,
+                    message
+                )
 
-                if reply_token:
-
-                    reply_message(
-                        reply_token,
-                        message
-                    )
-
+                discord_message(
+                    "🟢 **メンバー追加検知**\n"
+                    "LINEグループに新しいメンバーが追加されました。"
+                )
 
         # ==================================
         # メンバー退会・削除
@@ -548,7 +572,6 @@ def callback():
                 "🛡️ メンバー退会検知"
             )
 
-
             left = event.get(
                 "left",
                 {}
@@ -559,7 +582,6 @@ def callback():
                 []
             )
 
-
             for member in members:
 
                 user_id = member.get(
@@ -569,12 +591,10 @@ def callback():
                 if not user_id:
                     continue
 
-
                 print(
                     "退出ユーザーID:",
                     user_id
                 )
-
 
                 # ==========================
                 # 退会通知
@@ -590,9 +610,8 @@ def callback():
                     "自動判定できません。"
                 )
 
-
                 # ==========================
-                # Push送信
+                # LINE通知
                 # ==========================
 
                 push_message(
@@ -600,6 +619,16 @@ def callback():
                     leave_message
                 )
 
+                # ==========================
+                # Discord通知
+                # ==========================
+
+                discord_message(
+                    "🔴 **メンバー退会検知**\n\n"
+                    "LINEグループでメンバーの退会・削除を検知しました。\n\n"
+                    "⚠️ 誰が削除したかはLINEの仕様上、"
+                    "Botから特定できません。"
+                )
 
                 # ==========================
                 # 荒らし判定
@@ -610,13 +639,11 @@ def callback():
                     user_id
                 )
 
-
                 if detected:
 
                     print(
                         "🚨 荒らし警報発動"
                     )
-
 
                     alert_message = (
                         "🚨🚨 荒らし警報 🚨🚨\n\n"
@@ -632,12 +659,23 @@ def callback():
                         "Botから特定できません。"
                     )
 
+                    # LINE警報
 
                     push_message(
                         group_id,
                         alert_message
                     )
 
+                    # Discord警報
+
+                    discord_message(
+                        "🚨🚨 **荒らし警報** 🚨🚨\n\n"
+                        "⚠️ 10分以内に別々の2人以上の"
+                        "メンバーの退会・削除を検知しました。\n\n"
+                        "🛡️ 蹴り・荒らし行為の可能性があります。\n\n"
+                        "⚠️ LINEの仕様上、誰が削除したかは"
+                        "Botから特定できません。"
+                    )
 
         # ==================================
         # 通常メッセージ
@@ -649,20 +687,17 @@ def callback():
                 "通常メッセージを受信しました"
             )
 
-
             message = event.get(
                 "message",
                 {}
             )
 
-
             message_type = message.get(
                 "type"
             )
 
-
             # ==============================
-            # テキストメッセージのみ
+            # テキストのみ
             # ==============================
 
             if message_type == "text":
@@ -672,17 +707,14 @@ def callback():
                     ""
                 )
 
-
                 user_id = source.get(
                     "userId"
                 )
-
 
                 print(
                     "メッセージ:",
                     text
                 )
-
 
                 # ==========================
                 # スパムチェック
@@ -694,13 +726,11 @@ def callback():
                     text
                 )
 
-
                 if detected:
 
                     print(
                         "🚨 スパム検知"
                     )
-
 
                     spam_message = (
                         "🚨 スパム検知 🚨\n\n"
@@ -712,12 +742,21 @@ def callback():
                         "👑 管理者は確認してください。"
                     )
 
+                    # LINE通知
 
                     push_message(
                         group_id,
                         spam_message
                     )
 
+                    # Discord通知
+
+                    discord_message(
+                        "🚨 **スパム検知** 🚨\n\n"
+                        "同じユーザーから短時間に"
+                        "同じ内容の連続送信を検知しました。\n\n"
+                        "🛡️ 荒らし・スパムの可能性があります。"
+                    )
 
         # ==================================
         # その他
@@ -729,7 +768,6 @@ def callback():
                 "その他のイベント:",
                 event_type
             )
-
 
     # ======================================
     # LINEへ200
