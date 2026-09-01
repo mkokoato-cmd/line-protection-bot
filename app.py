@@ -92,7 +92,9 @@ def reply_message(reply_token, text):
         return
 
     if not CHANNEL_ACCESS_TOKEN:
-        print("CHANNEL_ACCESS_TOKEN が設定されていません")
+        print(
+            "CHANNEL_ACCESS_TOKEN が設定されていません"
+        )
         return
 
     headers = {
@@ -321,6 +323,7 @@ def check_spam(user_id):
 
     messages = users[user_id]["messages"]
 
+
     # --------------------------------------
     # 古い記録を削除
     # --------------------------------------
@@ -331,11 +334,13 @@ def check_spam(user_id):
         if now - t <= SPAM_WINDOW
     ]
 
+
     # --------------------------------------
     # 今回のメッセージを追加
     # --------------------------------------
 
     messages.append(now)
+
 
     # --------------------------------------
     # スパム判定
@@ -708,8 +713,10 @@ def webhook():
 
                     reply_message(
                         reply_token,
-                        f"🚨 メンバー退出を検知\n\n"
-                        f"👤 退出した人：{user_name}"
+                        "🚨 メンバー退出を検知\n\n"
+                        f"👤 退出した人：{user_name}\n\n"
+                        "⚠️ 強制退会または\n"
+                        "自分から退会した可能性があります。"
                     )
 
 
@@ -722,8 +729,8 @@ def webhook():
                     f"👤 退出した人：**{user_name}**\n"
                     f"🆔 User ID：{left_user_id}\n"
                     f"👥 グループ：{group_name}\n\n"
-                    "⚠️ LINEの仕様上、"
-                    "このイベントだけでは"
+                    "⚠️ 強制退会または自分から退会した可能性があります。\n"
+                    "※ LINEの仕様上、このイベントだけでは\n"
                     "「誰が追い出したか」は取得できません。"
                 )
 
