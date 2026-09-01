@@ -3,6 +3,7 @@ import json
 import hmac
 import hashlib
 import base64
+import time
 
 from flask import Flask, request, abort
 
@@ -20,6 +21,20 @@ CHANNEL_SECRET = os.environ.get("CHANNEL_SECRET")
 CHANNEL_ACCESS_TOKEN = os.environ.get("CHANNEL_ACCESS_TOKEN")
 
 LINE_API = "https://api.line.me/v2/bot"
+
+
+# ==========================================
+# 荒らし検知設定
+# ==========================================
+
+# 何分以内に何人退会したら警報を出すか
+KICK_DETECTION_SECONDS = 10 * 60
+
+KICK_DETECTION_COUNT = 2
+
+
+# グループごとの退会記録
+leave_history = {}
 
 
 # ==========================================
@@ -48,16 +63,21 @@ def verify_signature(body, signature):
 
 
 # ==========================================
-# LINEへ返信
+# LINE返信
 # ==========================================
 
 def reply_message(reply_token, text):
+
+    if not reply_token:
+        return
 
     url = f"{LINE_API}/message/reply"
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+        "Authorization": (
+            f"Bearer {CHANNEL_ACCESS_TOKEN}"
+        )
     }
 
     data = {
@@ -70,32 +90,48 @@ def reply_message(reply_token, text):
         ]
     }
 
-    response = requests.post(
-        url,
-        headers=headers,
-        json=data,
-        timeout=10
-    )
+    try:
 
-    print("LINE reply:", response.status_code)
-    print(response.text)
+        response = requests.post(
+            url,
+            headers=headers,
+            json=data,
+            timeout=10
+        )
+
+        print(
+            "LINE reply:",
+            response.status_code
+        )
+
+        print(
+            response.text
+        )
+
+    except Exception as e:
+
+        print(
+            "返信エラー:",
+            e
+        )
 
 
 # ==========================================
-# グループへメッセージ送信
+# LINE Push
 # ==========================================
 
-def send_message(group_id, text):
+def push_message(group_id, text):
 
     if not group_id:
-        print("グループIDがありません")
         return
 
     url = f"{LINE_API}/message/push"
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+        "Authorization": (
+            f"Bearer {CHANNEL_ACCESS_TOKEN}"
+        )
     }
 
     data = {
@@ -117,12 +153,21 @@ def send_message(group_id, text):
             timeout=10
         )
 
-        print("LINE push:", response.status_code)
-        print(response.text)
+        print(
+            "LINE push:",
+            response.status_code
+        )
+
+        print(
+            response.text
+        )
 
     except Exception as e:
 
-        print("メッセージ送信エラー:", e)
+        print(
+            "メッセージ送信エラー:",
+            e
+        )
 
 
 # ==========================================
@@ -140,7 +185,9 @@ def get_user_name(group_id, user_id):
     )
 
     headers = {
-        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+        "Authorization": (
+            f"Bearer {CHANNEL_ACCESS_TOKEN}"
+        )
     }
 
     try:
@@ -162,9 +209,55 @@ def get_user_name(group_id, user_id):
 
     except Exception as e:
 
-        print("名前取得エラー:", e)
+        print(
+            "名前取得エラー:",
+            e
+        )
 
     return "メンバー"
+
+
+# ==========================================
+# 荒らし検知
+# ==========================================
+
+def check_mass_leave(group_id):
+
+    if not group_id:
+        return False
+
+    now = time.time()
+
+    if group_id not in leave_history:
+
+        leave_history[group_id] = []
+
+    # 古い記録を削除
+    leave_history[group_id] = [
+        timestamp
+        for timestamp
+        in leave_history[group_id]
+        if now - timestamp
+        <= KICK_DETECTION_SECONDS
+    ]
+
+    # 今回の退会を追加
+    leave_history[group_id].append(now)
+
+    print(
+        "退会人数:",
+        len(leave_history[group_id])
+    )
+
+    # 2人以上なら荒らし警報
+    if len(leave_history[group_id]) >= KICK_DETECTION_COUNT:
+
+        # 警報を出したら一度リセット
+        leave_history[group_id] = []
+
+        return True
+
+    return False
 
 
 # ==========================================
@@ -190,7 +283,9 @@ def callback():
         signature
     ):
 
-        print("署名チェック失敗")
+        print(
+            "署名チェック失敗"
+        )
 
         abort(400)
 
@@ -216,7 +311,10 @@ def callback():
     )
 
 
-    print("受信イベント:", events)
+    print(
+        "受信イベント:",
+        events
+    )
 
 
     # ======================================
@@ -324,13 +422,17 @@ def callback():
                 )
 
 
+                # ==========================
+                # 通常の退会通知
+                # ==========================
+
                 message = (
                     "🛡️ 退会検知\n\n"
                     f"👤 {name}さんが\n"
                     "グループから退出しました。\n\n"
-                    "⚠️ 強制退会・本人による退会の\n"
-                    "判別はLINEのイベント情報から\n"
-                    "できません。"
+                    "⚠️ 強制退会か本人退会かは\n"
+                    "LINEのイベント情報から\n"
+                    "判別できません。"
                 )
 
 
@@ -339,6 +441,38 @@ def callback():
                     reply_message(
                         reply_token,
                         message
+                    )
+
+
+                # ==========================
+                # 荒らし検知
+                # ==========================
+
+                is_mass_leave = check_mass_leave(
+                    group_id
+                )
+
+
+                if is_mass_leave:
+
+                    alert_message = (
+                        "🚨🚨 荒らし警報 🚨🚨\n\n"
+                        "⚠️ 10分以内に\n"
+                        "2人以上のメンバーの\n"
+                        "退会を検知しました。\n\n"
+                        "🛡️ 蹴り・荒らし行為の\n"
+                        "可能性があります。\n\n"
+                        "👑 管理者はグループを\n"
+                        "確認してください。\n\n"
+                        "※LINEの仕様上、\n"
+                        "誰が退会させたかは\n"
+                        "Botから判別できません。"
+                    )
+
+
+                    push_message(
+                        group_id,
+                        alert_message
                     )
 
 
