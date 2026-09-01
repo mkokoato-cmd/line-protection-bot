@@ -32,7 +32,7 @@ LINE_API = "https://api.line.me/v2/bot"
 # ==========================================
 
 # 10分以内に
-# 2人以上の退会を検知したら警報
+# 別々の2人以上の退会を検知したら警報
 
 DETECTION_TIME = 10 * 60
 
@@ -40,10 +40,29 @@ DETECTION_COUNT = 2
 
 
 # ==========================================
+# スパム検知設定
+# ==========================================
+
+# 同じ人が短時間に同じ内容を
+# 5回以上送信したらスパム警告
+
+SPAM_TIME = 30
+
+SPAM_COUNT = 5
+
+
+# ==========================================
 # グループごとの退会履歴
 # ==========================================
 
 leave_history = {}
+
+
+# ==========================================
+# グループごとのスパム履歴
+# ==========================================
+
+spam_history = {}
 
 
 # ==========================================
@@ -219,6 +238,29 @@ def check_leave(group_id, user_id):
 
 
     # --------------------------------------
+    # 同じ人がすでに記録されているか確認
+    # --------------------------------------
+
+    already_recorded = any(
+        item["user_id"] == user_id
+        for item in leave_history[group_id]
+    )
+
+
+    # --------------------------------------
+    # 同じ人なら重複カウントしない
+    # --------------------------------------
+
+    if already_recorded:
+
+        print(
+            "同じユーザーなので重複カウントしません"
+        )
+
+        return False
+
+
+    # --------------------------------------
     # 今回の退会を記録
     # --------------------------------------
 
@@ -231,7 +273,7 @@ def check_leave(group_id, user_id):
 
 
     print(
-        "現在の退会検知数:",
+        "現在の退会人数:",
         len(leave_history[group_id])
     )
 
@@ -245,9 +287,114 @@ def check_leave(group_id, user_id):
         >= DETECTION_COUNT
     ):
 
+        print(
+            "🚨 荒らし警報発動"
+        )
+
+
         # 警報後リセット
 
         leave_history[group_id] = []
+
+        return True
+
+
+    return False
+
+
+# ==========================================
+# スパム検知
+# ==========================================
+
+def check_spam(group_id, user_id, text):
+
+    if not group_id:
+        return False
+
+    if not user_id:
+        return False
+
+    if not text:
+        return False
+
+
+    now = time.time()
+
+
+    # --------------------------------------
+    # グループ初回
+    # --------------------------------------
+
+    if group_id not in spam_history:
+
+        spam_history[group_id] = {}
+
+
+    # --------------------------------------
+    # ユーザー初回
+    # --------------------------------------
+
+    if user_id not in spam_history[group_id]:
+
+        spam_history[group_id][user_id] = []
+
+
+    # --------------------------------------
+    # 古い記録を削除
+    # --------------------------------------
+
+    spam_history[group_id][user_id] = [
+
+        item
+
+        for item in spam_history[group_id][user_id]
+
+        if now - item["time"] <= SPAM_TIME
+    ]
+
+
+    # --------------------------------------
+    # 今回のメッセージを記録
+    # --------------------------------------
+
+    spam_history[group_id][user_id].append(
+        {
+            "text": text,
+            "time": now
+        }
+    )
+
+
+    # --------------------------------------
+    # 同じ内容だけ取り出す
+    # --------------------------------------
+
+    same_messages = [
+
+        item
+
+        for item in spam_history[group_id][user_id]
+
+        if item["text"] == text
+    ]
+
+
+    print(
+        "同じ内容の送信回数:",
+        len(same_messages)
+    )
+
+
+    # --------------------------------------
+    # 5回以上ならスパム
+    # --------------------------------------
+
+    if len(same_messages) >= SPAM_COUNT:
+
+        # 警告後リセット
+
+        spam_history[group_id][user_id] = []
+
 
         return True
 
@@ -354,6 +501,7 @@ def callback():
                 "🟢 メンバー追加検知"
             )
 
+
             joined = event.get(
                 "joined",
                 {}
@@ -434,16 +582,18 @@ def callback():
 
                 leave_message = (
                     "🛡️ 蹴り保護Bot\n\n"
-                    "⚠️ メンバーの退会を検知しました。\n\n"
-                    "🚨 グループからメンバーが\n"
+                    "🔴 メンバーの退会を検知しました。\n\n"
+                    "👤 グループからメンバーが\n"
                     "退出・削除された可能性があります。\n\n"
-                    "※LINEの仕様上、\n"
+                    "⚠️ LINEの仕様上、\n"
                     "誰が削除したかは\n"
                     "自動判定できません。"
                 )
 
 
-                # ★ Pushで送信
+                # ==========================
+                # Push送信
+                # ==========================
 
                 push_message(
                     group_id,
@@ -471,7 +621,7 @@ def callback():
                     alert_message = (
                         "🚨🚨 荒らし警報 🚨🚨\n\n"
                         "⚠️ 10分以内に\n"
-                        "2人以上のメンバーの\n"
+                        "別々の2人以上のメンバーの\n"
                         "退会・削除を検知しました。\n\n"
                         "🛡️ 蹴り・荒らし行為の\n"
                         "可能性があります。\n\n"
@@ -498,6 +648,75 @@ def callback():
             print(
                 "通常メッセージを受信しました"
             )
+
+
+            message = event.get(
+                "message",
+                {}
+            )
+
+
+            message_type = message.get(
+                "type"
+            )
+
+
+            # ==============================
+            # テキストメッセージのみ
+            # ==============================
+
+            if message_type == "text":
+
+                text = message.get(
+                    "text",
+                    ""
+                )
+
+
+                user_id = source.get(
+                    "userId"
+                )
+
+
+                print(
+                    "メッセージ:",
+                    text
+                )
+
+
+                # ==========================
+                # スパムチェック
+                # ==========================
+
+                detected = check_spam(
+                    group_id,
+                    user_id,
+                    text
+                )
+
+
+                if detected:
+
+                    print(
+                        "🚨 スパム検知"
+                    )
+
+
+                    spam_message = (
+                        "🚨 スパム検知 🚨\n\n"
+                        "⚠️ 同じユーザーから\n"
+                        "短時間に同じ内容の\n"
+                        "連続送信を検知しました。\n\n"
+                        "🛡️ 荒らし・スパムの\n"
+                        "可能性があります。\n\n"
+                        "👑 管理者は確認してください。"
+                    )
+
+
+                    push_message(
+                        group_id,
+                        spam_message
+                    )
 
 
         # ==================================
