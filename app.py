@@ -6,7 +6,6 @@ import base64
 import time
 
 from flask import Flask, request, abort
-
 import requests
 
 
@@ -32,12 +31,12 @@ LINE_API = "https://api.line.me/v2/bot"
 # 荒らし検知設定
 # ==========================================
 
-# 何秒以内に
-# 何人退会したら警報を出すか
+# 10分以内に
+# 2人以上の退会を検知したら警報
 
-KICK_DETECTION_SECONDS = 10 * 60
+DETECTION_TIME = 10 * 60
 
-KICK_DETECTION_COUNT = 2
+DETECTION_COUNT = 2
 
 
 # ==========================================
@@ -76,7 +75,7 @@ def verify_signature(body, signature):
 
 
 # ==========================================
-# LINE返信メッセージ
+# LINE返信
 # ==========================================
 
 def reply_message(reply_token, text):
@@ -132,7 +131,7 @@ def reply_message(reply_token, text):
 
 
 # ==========================================
-# LINEプッシュメッセージ
+# LINE Push
 # ==========================================
 
 def push_message(group_id, text):
@@ -182,72 +181,16 @@ def push_message(group_id, text):
     except Exception as e:
 
         print(
-            "プッシュ送信エラー:",
+            "Push送信エラー:",
             e
         )
-
-
-# ==========================================
-# ユーザー名取得
-# ==========================================
-
-def get_user_name(group_id, user_id):
-
-    if not group_id:
-        return "メンバー"
-
-    if not user_id:
-        return "メンバー"
-
-    url = (
-        f"{LINE_API}/group/"
-        f"{group_id}/member/"
-        f"{user_id}"
-    )
-
-    headers = {
-        "Authorization": (
-            f"Bearer {CHANNEL_ACCESS_TOKEN}"
-        )
-    }
-
-    try:
-
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=10
-        )
-
-        if response.status_code == 200:
-
-            data = response.json()
-
-            return data.get(
-                "displayName",
-                "メンバー"
-            )
-
-        print(
-            "名前取得失敗:",
-            response.status_code
-        )
-
-    except Exception as e:
-
-        print(
-            "名前取得エラー:",
-            e
-        )
-
-    return "メンバー"
 
 
 # ==========================================
 # 荒らし検知
 # ==========================================
 
-def check_mass_leave(group_id):
+def check_leave(group_id, user_id):
 
     if not group_id:
         return False
@@ -256,7 +199,7 @@ def check_mass_leave(group_id):
 
 
     # --------------------------------------
-    # 初回
+    # グループ初回
     # --------------------------------------
 
     if group_id not in leave_history:
@@ -265,53 +208,44 @@ def check_mass_leave(group_id):
 
 
     # --------------------------------------
-    # 10分より古い記録を削除
+    # 古い記録を削除
     # --------------------------------------
 
-    new_history = []
-
-    for timestamp in leave_history[group_id]:
-
-        if (
-            now - timestamp
-            <= KICK_DETECTION_SECONDS
-        ):
-
-            new_history.append(
-                timestamp
-            )
-
-
-    leave_history[group_id] = (
-        new_history
-    )
+    leave_history[group_id] = [
+        item
+        for item in leave_history[group_id]
+        if now - item["time"] <= DETECTION_TIME
+    ]
 
 
     # --------------------------------------
-    # 今回の退会を追加
+    # 今回の退会を記録
     # --------------------------------------
 
     leave_history[group_id].append(
-        now
+        {
+            "user_id": user_id,
+            "time": now
+        }
     )
 
 
     print(
-        "退会検知数:",
+        "現在の退会検知数:",
         len(leave_history[group_id])
     )
 
 
     # --------------------------------------
-    # 2人以上なら荒らし警報
+    # 2人以上なら警報
     # --------------------------------------
 
     if (
         len(leave_history[group_id])
-        >= KICK_DETECTION_COUNT
+        >= DETECTION_COUNT
     ):
 
-        # 警報後にリセット
+        # 警報後リセット
 
         leave_history[group_id] = []
 
@@ -332,11 +266,6 @@ def check_mass_leave(group_id):
 def callback():
 
     body = request.get_data()
-
-
-    # ======================================
-    # LINE署名
-    # ======================================
 
     signature = request.headers.get(
         "X-Line-Signature"
@@ -360,7 +289,7 @@ def callback():
 
 
     # ======================================
-    # JSON読み込み
+    # JSON
     # ======================================
 
     try:
@@ -378,10 +307,6 @@ def callback():
 
         abort(400)
 
-
-    # ======================================
-    # イベント取得
-    # ======================================
 
     events = data.get(
         "events",
@@ -405,17 +330,14 @@ def callback():
             "type"
         )
 
-
         reply_token = event.get(
             "replyToken"
         )
-
 
         source = event.get(
             "source",
             {}
         )
-
 
         group_id = source.get(
             "groupId"
@@ -429,15 +351,13 @@ def callback():
         if event_type == "memberJoined":
 
             print(
-                "メンバー追加イベント"
+                "🟢 メンバー追加検知"
             )
-
 
             joined = event.get(
                 "joined",
                 {}
             )
-
 
             members = joined.get(
                 "members",
@@ -451,26 +371,16 @@ def callback():
                     "userId"
                 )
 
-
                 if not user_id:
                     continue
 
 
-                name = get_user_name(
-                    group_id,
-                    user_id
-                )
-
-
                 message = (
                     "🟢 メンバー追加\n\n"
-                    f"👤 {name}さんが\n"
+                    "👤 新しいメンバーが\n"
                     "グループに追加されました。"
                 )
 
-
-                # memberJoinedは
-                # replyTokenがあるため返信
 
                 if reply_token:
 
@@ -481,13 +391,13 @@ def callback():
 
 
         # ==================================
-        # メンバー退会
+        # メンバー退会・削除
         # ==================================
 
         elif event_type == "memberLeft":
 
             print(
-                "⚠️ メンバー退会イベント"
+                "🛡️ メンバー退会検知"
             )
 
 
@@ -495,7 +405,6 @@ def callback():
                 "left",
                 {}
             )
-
 
             members = left.get(
                 "members",
@@ -509,55 +418,50 @@ def callback():
                     "userId"
                 )
 
-
                 if not user_id:
                     continue
 
 
                 print(
-                    "退会ユーザー:",
+                    "退出ユーザーID:",
                     user_id
                 )
 
 
-                # ==================================
+                # ==========================
                 # 退会通知
-                # ==================================
+                # ==========================
 
-                message = (
+                leave_message = (
                     "🛡️ 蹴り保護Bot\n\n"
                     "⚠️ メンバーの退会を検知しました。\n\n"
                     "🚨 グループからメンバーが\n"
                     "退出・削除された可能性があります。\n\n"
                     "※LINEの仕様上、\n"
                     "誰が削除したかは\n"
-                    "Botから判別できません。"
+                    "自動判定できません。"
                 )
 
 
-                # ==================================
-                # ★重要★
-                # memberLeftはPush送信
-                # ==================================
+                # ★ Pushで送信
 
                 push_message(
                     group_id,
-                    message
+                    leave_message
                 )
 
 
-                # ==================================
-                # 荒らし検知
-                # ==================================
+                # ==========================
+                # 荒らし判定
+                # ==========================
 
-                is_mass_leave = (
-                    check_mass_leave(
-                        group_id
-                    )
+                detected = check_leave(
+                    group_id,
+                    user_id
                 )
 
 
-                if is_mass_leave:
+                if detected:
 
                     print(
                         "🚨 荒らし警報発動"
@@ -568,14 +472,14 @@ def callback():
                         "🚨🚨 荒らし警報 🚨🚨\n\n"
                         "⚠️ 10分以内に\n"
                         "2人以上のメンバーの\n"
-                        "退会を検知しました。\n\n"
+                        "退会・削除を検知しました。\n\n"
                         "🛡️ 蹴り・荒らし行為の\n"
                         "可能性があります。\n\n"
                         "👑 管理者はグループを\n"
                         "確認してください。\n\n"
-                        "※LINEの仕様上、\n"
+                        "⚠️ LINEの仕様上、\n"
                         "誰が削除したかは\n"
-                        "Botから判別できません。"
+                        "Botから特定できません。"
                     )
 
 
@@ -609,7 +513,7 @@ def callback():
 
 
     # ======================================
-    # LINEへ200を返す
+    # LINEへ200
     # ======================================
 
     return "OK", 200
@@ -627,7 +531,6 @@ if __name__ == "__main__":
             10000
         )
     )
-
 
     app.run(
         host="0.0.0.0",
