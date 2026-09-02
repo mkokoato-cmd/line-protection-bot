@@ -30,11 +30,68 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 
 # ==========================================
+# 管理者設定
+#
+# Renderの環境変数に
+# ADMIN_USER_IDS
+# を設定してください。
+#
+# 複数人の場合
+# userID1,userID2,userID3
+# ==========================================
+
+ADMIN_USER_IDS = os.environ.get(
+    "ADMIN_USER_IDS",
+    ""
+)
+
+ADMIN_USER_IDS = [
+    x.strip()
+    for x in ADMIN_USER_IDS.split(",")
+    if x.strip()
+]
+
+
+# ==========================================
 # スパム設定
 # ==========================================
 
-SPAM_COUNT = 5
+# ★ 荒らし回数2回
+SPAM_COUNT = 2
+
+# ★ 10秒以内
 SPAM_WINDOW = 10
+
+
+# ==========================================
+# 荒らし自動検知設定
+# ==========================================
+
+# グループごとのON/OFF
+spam_settings = {}
+
+
+# ==========================================
+# 荒らし対象者
+#
+# group_id:
+#   user_id:
+#       name
+#       count
+#       detected_at
+# ==========================================
+
+spam_targets = {}
+
+
+# ==========================================
+# 最後に検知した荒らし
+#
+# /追い出し
+# で使用
+# ==========================================
+
+last_spammer = {}
 
 
 # ==========================================
@@ -137,9 +194,6 @@ def reply_message(reply_token, text):
 
 # ==========================================
 # LINEプッシュ送信
-#
-# memberLeftなど、
-# replyTokenがないイベントはこちらを使用
 # ==========================================
 
 def push_message(group_id, text):
@@ -232,12 +286,27 @@ def send_discord(message):
 
 
 # ==========================================
+# 管理者チェック
+# ==========================================
+
+def is_admin(user_id):
+
+    if not user_id:
+        return False
+
+    return user_id in ADMIN_USER_IDS
+
+
+# ==========================================
 # ユーザープロフィール取得
 # ==========================================
 
 def get_user_profile(group_id, user_id):
 
     if not user_id:
+        return None
+
+    if not group_id:
         return None
 
     url = f"{LINE_API}/group/{group_id}/member/{user_id}"
@@ -333,14 +402,12 @@ def register_kick(group_id, count):
     if group_id not in kick_records:
         kick_records[group_id] = []
 
-    # 古い記録を削除
     kick_records[group_id] = [
         t
         for t in kick_records[group_id]
         if now - t < KICK_WINDOW
     ]
 
-    # 今回の削除人数を追加
     for _ in range(count):
         kick_records[group_id].append(now)
 
@@ -364,14 +431,12 @@ def get_member_names(group_id, members):
 
         name = None
 
-        # キャッシュ確認
         if user_id in users:
 
             name = users[user_id].get(
                 "name"
             )
 
-        # APIから取得
         if not name:
 
             profile = get_user_profile(
@@ -388,7 +453,6 @@ def get_member_names(group_id, members):
         if not name:
             name = "名前取得不可"
 
-        # キャッシュ保存
         users[user_id] = {
             "name": name
         }
@@ -396,6 +460,87 @@ def get_member_names(group_id, members):
         names.append(name)
 
     return names
+
+
+# ==========================================
+# 荒らし設定取得
+# ==========================================
+
+def is_spam_enabled(group_id):
+
+    if not group_id:
+        return False
+
+    return spam_settings.get(
+        group_id,
+        True
+    )
+
+
+# ==========================================
+# 荒らし設定ON
+# ==========================================
+
+def enable_spam(group_id):
+
+    spam_settings[group_id] = True
+
+
+# ==========================================
+# 荒らし設定OFF
+# ==========================================
+
+def disable_spam(group_id):
+
+    spam_settings[group_id] = False
+
+
+# ==========================================
+# 荒らし対象登録
+# ==========================================
+
+def register_spam_target(
+    group_id,
+    user_id,
+    name,
+    count
+):
+
+    if group_id not in spam_targets:
+
+        spam_targets[group_id] = {}
+
+    spam_targets[group_id][user_id] = {
+
+        "name": name,
+
+        "count": count,
+
+        "detected_at": time.time()
+    }
+
+    last_spammer[group_id] = {
+
+        "user_id": user_id,
+
+        "name": name,
+
+        "detected_at": time.time()
+    }
+
+
+# ==========================================
+# 荒らし対象取得
+# ==========================================
+
+def get_spam_target(group_id, user_id):
+
+    if group_id not in spam_targets:
+        return None
+
+    return spam_targets[group_id].get(
+        user_id
+    )
 
 
 # ==========================================
@@ -425,9 +570,10 @@ def callback():
     print("Webhook received")
     print("================================")
 
-    # --------------------------------------
+
+    # ======================================
     # 署名チェック
-    # --------------------------------------
+    # ======================================
 
     if not verify_signature(
         body,
@@ -439,9 +585,9 @@ def callback():
         abort(400)
 
 
-    # --------------------------------------
+    # ======================================
     # JSON解析
-    # --------------------------------------
+    # ======================================
 
     try:
 
@@ -506,7 +652,7 @@ def callback():
                 text = message.get(
                     "text",
                     ""
-                )
+                ).strip()
 
                 source = event.get(
                     "source",
@@ -521,12 +667,230 @@ def callback():
                     "groupId"
                 )
 
+                reply_token = event.get(
+                    "replyToken"
+                )
+
                 if not user_id:
                     continue
 
-                # ------------------------------
+
+                # ==================================
+                # 管理者コマンド
+                # ==================================
+
+                if text in [
+                    "/荒らし設定 ON",
+                    "/荒らし設定ON"
+                ]:
+
+                    if not group_id:
+                        continue
+
+                    if not is_admin(user_id):
+
+                        reply_message(
+                            reply_token,
+                            "⛔ このコマンドは管理者専用です。"
+                        )
+
+                        continue
+
+                    enable_spam(group_id)
+
+                    message_text = (
+                        "🛡️ 荒らし自動検知設定\n\n"
+                        "✅ ONにしました。\n\n"
+                        "🚨 荒らし判定：2回\n"
+                        f"⏱ 判定時間：{SPAM_WINDOW}秒以内\n\n"
+                        "同じ人が2回連投すると\n"
+                        "荒らし対象として記録します。"
+                    )
+
+                    reply_message(
+                        reply_token,
+                        message_text
+                    )
+
+                    send_discord(
+                        message_text
+                    )
+
+                    continue
+
+
+                if text in [
+                    "/荒らし設定 OFF",
+                    "/荒らし設定OFF"
+                ]:
+
+                    if not group_id:
+                        continue
+
+                    if not is_admin(user_id):
+
+                        reply_message(
+                            reply_token,
+                            "⛔ このコマンドは管理者専用です。"
+                        )
+
+                        continue
+
+                    disable_spam(group_id)
+
+                    message_text = (
+                        "🛡️ 荒らし自動検知設定\n\n"
+                        "❌ OFFにしました。\n\n"
+                        "荒らし自動検知を停止しました。"
+                    )
+
+                    reply_message(
+                        reply_token,
+                        message_text
+                    )
+
+                    send_discord(
+                        message_text
+                    )
+
+                    continue
+
+
+                # ==================================
+                # 強制追い出し対象コマンド
+                #
+                # /追い出し
+                #
+                # 最後に検知した荒らしを
+                # 追い出し対象として通知
+                # ==================================
+
+                if text == "/追い出し":
+
+                    if not group_id:
+                        continue
+
+                    if not is_admin(user_id):
+
+                        reply_message(
+                            reply_token,
+                            "⛔ このコマンドは管理者専用です。"
+                        )
+
+                        continue
+
+                    target = last_spammer.get(
+                        group_id
+                    )
+
+                    if not target:
+
+                        reply_message(
+                            reply_token,
+                            "ℹ️ 現在、追い出し対象として記録された荒らしはいません。"
+                        )
+
+                        continue
+
+                    target_user_id = target.get(
+                        "user_id"
+                    )
+
+                    target_name = target.get(
+                        "name",
+                        "不明"
+                    )
+
+                    group_name = get_group_name(
+                        group_id
+                    )
+
+                    kick_message = (
+                        "🚨 荒らし強制追い出し対象\n\n"
+                        f"👤 ユーザー：{target_name}\n"
+                        f"🆔 ユーザーID：{target_user_id}\n"
+                        f"👥 グループ：{group_name}\n\n"
+                        "⚠️ このユーザーを強制退会させてください。\n"
+                        "※ LINE Botから他メンバーを直接退会させることはできません。\n\n"
+                        "🛡️ グループ保護Bot"
+                    )
+
+                    reply_message(
+                        reply_token,
+                        kick_message
+                    )
+
+                    send_discord(
+                        kick_message
+                    )
+
+                    continue
+
+
+                # ==================================
+                # 荒らし対象確認
+                # ==================================
+
+                if text == "/荒らし対象":
+
+                    if not group_id:
+                        continue
+
+                    if not is_admin(user_id):
+
+                        reply_message(
+                            reply_token,
+                            "⛔ このコマンドは管理者専用です。"
+                        )
+
+                        continue
+
+                    targets = spam_targets.get(
+                        group_id,
+                        {}
+                    )
+
+                    if not targets:
+
+                        reply_message(
+                            reply_token,
+                            "✅ 現在、荒らし対象者はいません。"
+                        )
+
+                        continue
+
+                    lines = [
+                        "🚨 荒らし対象一覧",
+                        ""
+                    ]
+
+                    for target_id, target in targets.items():
+
+                        lines.append(
+                            f"👤 {target.get('name', '不明')}"
+                        )
+
+                        lines.append(
+                            f"🆔 {target_id}"
+                        )
+
+                        lines.append(
+                            f"💬 {target.get('count', 0)}回"
+                        )
+
+                        lines.append("")
+
+                    reply_message(
+                        reply_token,
+                        "\n".join(lines)
+                    )
+
+                    continue
+
+
+                # ==================================
                 # 名前取得
-                # ------------------------------
+                # ==================================
 
                 name = "不明"
 
@@ -544,14 +908,17 @@ def callback():
                             "不明"
                         )
 
-                # ------------------------------
+
+                # ==================================
                 # ユーザー保存
-                # ------------------------------
+                # ==================================
 
                 if user_id not in users:
 
                     users[user_id] = {
+
                         "name": name,
+
                         "messages": []
                     }
 
@@ -561,9 +928,21 @@ def callback():
 
                     users[user_id]["messages"] = []
 
-                # ------------------------------
+
+                # ==================================
+                # 荒らし検知OFFなら終了
+                # ==================================
+
+                if not group_id:
+                    continue
+
+                if not is_spam_enabled(group_id):
+                    continue
+
+
+                # ==================================
                 # メッセージ時間保存
-                # ------------------------------
+                # ==================================
 
                 now = time.time()
 
@@ -571,19 +950,25 @@ def callback():
                     now
                 )
 
-                # ------------------------------
-                # 10秒より古いものを削除
-                # ------------------------------
+
+                # ==================================
+                # 10秒より古いもの削除
+                # ==================================
 
                 users[user_id]["messages"] = [
+
                     t
+
                     for t in users[user_id]["messages"]
+
                     if now - t <= SPAM_WINDOW
                 ]
+
 
                 message_count = len(
                     users[user_id]["messages"]
                 )
+
 
                 print(
                     "SPAM CHECK:",
@@ -591,47 +976,90 @@ def callback():
                     message_count
                 )
 
-                # ------------------------------
-                # スパム判定
-                # ------------------------------
 
-                if (
-                    group_id
-                    and message_count >= SPAM_COUNT
-                ):
+                # ==================================
+                # 2回で荒らし判定
+                # ==================================
+
+                if message_count >= SPAM_COUNT:
 
                     group_name = get_group_name(
                         group_id
                     )
 
+
+                    # ==================================
+                    # 荒らし対象登録
+                    # ==================================
+
+                    register_spam_target(
+
+                        group_id,
+
+                        user_id,
+
+                        name,
+
+                        message_count
+                    )
+
+
+                    # ==================================
+                    # 警告
+                    # ==================================
+
                     warning = (
-                        "🚨 スパムを検知しました\n\n"
+
+                        "🚨 荒らしを検知しました\n\n"
+
                         f"👤 ユーザー：{name}\n"
+
+                        f"🆔 ユーザーID：{user_id}\n"
+
                         f"👥 グループ：{group_name}\n"
+
                         f"💬 連投：{message_count}回\n"
+
                         f"⏱ 判定時間：{SPAM_WINDOW}秒以内\n\n"
-                        "⚠️ 管理者は確認してください。\n"
+
+                        "⚠️ このユーザーを\n"
+                        "強制追い出し対象として記録しました。\n\n"
+
+                        "管理者は\n"
+                        "「/追い出し」\n"
+                        "を使用してください。\n\n"
+
                         "🛡️ グループ保護Bot監視中"
                     )
 
+
+                    # ==================================
                     # LINE返信
-                    reply_token = event.get(
-                        "replyToken"
-                    )
+                    # ==================================
 
                     if reply_token:
 
                         reply_message(
+
                             reply_token,
+
                             warning
                         )
 
+
+                    # ==================================
                     # Discord
+                    # ==================================
+
                     send_discord(
                         warning
                     )
 
-                    # カウントをリセット
+
+                    # ==================================
+                    # カウントリセット
+                    # ==================================
+
                     users[user_id]["messages"] = []
 
 
@@ -684,9 +1112,13 @@ def callback():
                 )
 
                 notification = (
+
                     "✅ メンバー追加を検知しました\n\n"
+
                     f"👥 グループ：{group_name}\n"
+
                     f"{member_text}\n\n"
+
                     "🛡️ グループ保護Bot監視中"
                 )
 
@@ -694,7 +1126,6 @@ def callback():
                     notification
                 )
 
-                # 追加イベントは返信
                 reply_token = event.get(
                     "replyToken"
                 )
@@ -706,7 +1137,6 @@ def callback():
                         notification
                     )
 
-                # Discord
                 send_discord(
                     notification
                 )
@@ -738,21 +1168,20 @@ def callback():
                     []
                 )
 
-                # ------------------------------
-                # 削除された人数
-                # ------------------------------
+
+                # ==================================
+                # 削除人数
+                # ==================================
 
                 count = len(members)
 
                 if count <= 0:
                     count = 1
 
-                # ------------------------------
+
+                # ==================================
                 # 名前取得
-                #
-                # 退会済みなのでAPI取得できない
-                # 場合があるためキャッシュ優先
-                # ------------------------------
+                # ==================================
 
                 names = get_member_names(
                     group_id,
@@ -765,26 +1194,29 @@ def callback():
                         "名前取得不可"
                     ]
 
-                # ------------------------------
+
+                # ==================================
                 # 削除記録
-                # ------------------------------
+                # ==================================
 
                 total_kicks = register_kick(
                     group_id,
                     count
                 )
 
-                # ------------------------------
+
+                # ==================================
                 # グループ名
-                # ------------------------------
+                # ==================================
 
                 group_name = get_group_name(
                     group_id
                 )
 
-                # ------------------------------
+
+                # ==================================
                 # 名前表示
-                # ------------------------------
+                # ==================================
 
                 member_text = "\n".join(
                     [
@@ -793,17 +1225,25 @@ def callback():
                     ]
                 )
 
-                # ------------------------------
+
+                # ==================================
                 # 警告
-                # ------------------------------
+                # ==================================
 
                 notification = (
+
                     "🚨 メンバー削除を検知しました\n\n"
+
                     f"👥 グループ：{group_name}\n"
+
                     f"{member_text}\n\n"
+
                     f"⚠️ 今回の削除人数：{count}人\n"
+
                     f"📊 直近{KICK_WINDOW}秒の削除人数：{total_kicks}人\n\n"
+
                     "⚠️ 管理者は確認してください。\n"
+
                     "🛡️ グループ保護Bot監視中"
                 )
 
@@ -811,20 +1251,21 @@ def callback():
                     notification
                 )
 
-                # --------------------------------
-                # ★重要★
-                #
-                # memberLeftには返信トークンが
-                # ない場合があるため、
-                # LINE Push APIで送信
-                # --------------------------------
+
+                # ==================================
+                # LINE Push
+                # ==================================
 
                 push_message(
                     group_id,
                     notification
                 )
 
-                # Discordにも送信
+
+                # ==================================
+                # Discord
+                # ==================================
+
                 send_discord(
                     notification
                 )
@@ -837,13 +1278,11 @@ def callback():
                 repr(e)
             )
 
-            # 1イベントでエラーが出ても
-            # 次のイベントを処理する
             continue
 
 
     # ======================================
-    # LINEには必ず200を返す
+    # LINEには必ず200
     # ======================================
 
     return "OK", 200
