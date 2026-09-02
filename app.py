@@ -2,7 +2,6 @@ import os
 import hmac
 import hashlib
 import base64
-import json
 import requests
 
 from flask import Flask, request, abort
@@ -46,21 +45,49 @@ FORBIDDEN_WORDS = [
 # 荒らし名簿
 # ==========================================
 
-# グループごとに荒らしを保存
+# グループごとの荒らし名簿
 #
 # {
-#   "グループID": {
-#       "ユーザーID": "名前"
-#   }
+#     "group_id": {
+#         "user_id": "名前"
+#     }
 # }
 #
 spam_users = {}
 
+
+# ==========================================
 # グループごとの最後の荒らし
+# ==========================================
+
 last_spam_user = {}
 
-# ユーザーID → 名前
+
+# ==========================================
+# ユーザー名保存
+# ==========================================
+
 user_names = {}
+
+
+# ==========================================
+# メッセージID → ユーザーID
+# ==========================================
+
+# LINEの返信先を特定するために使用
+#
+# {
+#     "LINE message ID": "LINE User ID"
+# }
+#
+message_users = {}
+
+
+# ==========================================
+# メッセージID → グループID
+# ==========================================
+
+message_groups = {}
 
 
 # ==========================================
@@ -323,13 +350,10 @@ def send_discord_id_notification(
 
 
 # ==========================================
-# Discord荒らし名簿通知
+# Discord荒らし名簿
 # ==========================================
 
-def send_discord_roster(
-    group_id,
-    roster
-):
+def send_discord_roster(roster):
 
     if not DISCORD_WEBHOOK_URL:
         return
@@ -363,7 +387,7 @@ def send_discord_roster(
             )
 
             lines.append(
-                f"   🆔 {user_id}"
+                f"   🆔 LINE User ID：{user_id}"
             )
 
         message = "\n".join(lines)
@@ -388,6 +412,91 @@ def send_discord_roster(
 
         print(
             "Discord roster error:",
+            e
+        )
+
+
+# ==========================================
+# Discord荒らし登録通知
+# ==========================================
+
+def send_discord_register_notification(
+    user_name,
+    user_id
+):
+
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    message = (
+        "🚨 荒らし登録\n\n"
+        f"👤 名前：{user_name}\n"
+        f"🆔 LINE User ID：{user_id}\n\n"
+        "📋 荒らし名簿に登録しました。"
+    )
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json={
+                "content": message
+            },
+            timeout=10
+        )
+
+        print(
+            "Discord register:",
+            response.status_code,
+            response.text
+        )
+
+    except Exception as e:
+
+        print(
+            "Discord register error:",
+            e
+        )
+
+
+# ==========================================
+# Discord荒らし削除通知
+# ==========================================
+
+def send_discord_delete_notification(
+    user_name,
+    user_id
+):
+
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    message = (
+        "🗑️ 荒らし名簿から削除\n\n"
+        f"👤 名前：{user_name}\n"
+        f"🆔 LINE User ID：{user_id}"
+    )
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json={
+                "content": message
+            },
+            timeout=10
+        )
+
+        print(
+            "Discord delete:",
+            response.status_code,
+            response.text
+        )
+
+    except Exception as e:
+
+        print(
+            "Discord delete error:",
             e
         )
 
@@ -424,6 +533,12 @@ def get_user_name(user_id):
                 "displayName",
                 "不明なユーザー"
             )
+
+        print(
+            "Profile status:",
+            response.status_code,
+            response.text
+        )
 
     except Exception as e:
 
@@ -462,6 +577,40 @@ def register_spam_user(
 
 
 # ==========================================
+# 荒らし削除
+# ==========================================
+
+def delete_spam_user(
+    group_id,
+    user_id
+):
+
+    if not group_id:
+        return False
+
+    roster = spam_users.get(
+        group_id,
+        {}
+    )
+
+    if user_id not in roster:
+        return False
+
+    del roster[user_id]
+
+    if last_spam_user.get(
+        group_id
+    ) == user_id:
+
+        last_spam_user.pop(
+            group_id,
+            None
+        )
+
+    return True
+
+
+# ==========================================
 # LINE Webhook
 # ==========================================
 
@@ -492,7 +641,9 @@ def callback():
 
     try:
 
-        events = request.json.get(
+        data = request.json
+
+        events = data.get(
             "events",
             []
         )
@@ -531,6 +682,10 @@ def callback():
             ""
         ).strip()
 
+        message_id = message.get(
+            "id"
+        )
+
         reply_token = event.get(
             "replyToken"
         )
@@ -564,6 +719,68 @@ def callback():
         user_names[
             user_id
         ] = user_name
+
+
+        # ==================================
+        # メッセージIDを保存
+        # ==================================
+
+        if message_id:
+
+            message_users[
+                message_id
+            ] = user_id
+
+            if group_id:
+
+                message_groups[
+                    message_id
+                ] = group_id
+
+
+        # ==================================
+        # 返信先メッセージID
+        # ==================================
+
+        quoted_message_id = message.get(
+            "quotedMessageId"
+        )
+
+
+        # ==================================
+        # 返信先ユーザーID取得
+        # ==================================
+
+        quoted_user_id = None
+
+        if quoted_message_id:
+
+            quoted_user_id = message_users.get(
+                quoted_message_id
+            )
+
+
+        # ==================================
+        # 返信先ユーザー名取得
+        # ==================================
+
+        quoted_user_name = None
+
+        if quoted_user_id:
+
+            quoted_user_name = user_names.get(
+                quoted_user_id
+            )
+
+            if not quoted_user_name:
+
+                quoted_user_name = get_user_name(
+                    quoted_user_id
+                )
+
+                user_names[
+                    quoted_user_id
+                ] = quoted_user_name
 
 
         # ==================================
@@ -628,7 +845,7 @@ def callback():
 
 
             # ==================================
-            # LINEには名前だけ表示
+            # LINEには名前だけ
             # ==================================
 
             if not roster:
@@ -669,12 +886,8 @@ def callback():
                 )
 
 
-            # ==================================
-            # DiscordにはID付きで送信
-            # ==================================
-
+            # DiscordにはID付き
             send_discord_roster(
-                group_id,
                 roster
             )
 
@@ -700,9 +913,23 @@ def callback():
                 continue
 
 
-            target_user_id = last_spam_user.get(
-                group_id
-            )
+            # ==================================
+            # 返信先を削除対象にする
+            # ==================================
+
+            target_user_id = quoted_user_id
+
+
+            # ==================================
+            # 返信していない場合は
+            # 最後の荒らしを対象にする
+            # ==================================
+
+            if not target_user_id:
+
+                target_user_id = last_spam_user.get(
+                    group_id
+                )
 
 
             if not target_user_id:
@@ -711,7 +938,10 @@ def callback():
 
                     reply_message(
                         reply_token,
-                        "⚠️ 削除対象がありません。"
+                        "⚠️ 削除対象がありません。\n\n"
+                        "荒らしにした人のメッセージに返信して\n"
+                        "!荒らし削除\n"
+                        "と入力してください。"
                     )
 
                 continue
@@ -732,19 +962,32 @@ def callback():
             )
 
 
-            if target_user_id in roster:
+            # ==================================
+            # 名簿から削除
+            # ==================================
 
-                del roster[
-                    target_user_id
-                ]
-
-
-            # 最後の対象をクリア
-            last_spam_user.pop(
+            deleted = delete_spam_user(
                 group_id,
-                None
+                target_user_id
             )
 
+
+            if not deleted:
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ そのユーザーは"
+                        "荒らし名簿に登録されていません。"
+                    )
+
+                continue
+
+
+            # ==================================
+            # LINE通知
+            # ==================================
 
             if reply_token:
 
@@ -755,30 +998,214 @@ def callback():
                 )
 
 
-            # Discordにも通知
-            if DISCORD_WEBHOOK_URL:
+            # ==================================
+            # Discord通知
+            # ==================================
 
-                try:
+            send_discord_delete_notification(
+                target_name,
+                target_user_id
+            )
 
-                    requests.post(
-                        DISCORD_WEBHOOK_URL,
-                        json={
-                            "content": (
-                                "🗑️ 荒らし名簿から削除\n\n"
-                                f"👤 名前：{target_name}\n"
-                                f"🆔 LINE User ID："
-                                f"{target_user_id}"
-                            )
-                        },
-                        timeout=10
+            continue
+
+
+        # ==================================
+        # !荒らし
+        # ==================================
+
+        if text == "!荒らし":
+
+            if not group_id:
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ このコマンドは"
+                        "グループ内で使用してください。"
                     )
 
-                except Exception as e:
+                continue
 
-                    print(
-                        "Discord delete error:",
-                        e
+
+            # ==================================
+            # 返信先がない場合
+            # ==================================
+
+            if not quoted_user_id:
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ 荒らし登録する人の"
+                        "メッセージに返信して\n\n"
+                        "!荒らし\n\n"
+                        "と入力してください。"
                     )
+
+                continue
+
+
+            # ==================================
+            # 自分自身を登録しない
+            # ==================================
+
+            if quoted_user_id == user_id:
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ 自分自身は"
+                        "荒らし登録できません。"
+                    )
+
+                continue
+
+
+            # ==================================
+            # 荒らし名簿へ登録
+            # ==================================
+
+            register_spam_user(
+                group_id,
+                quoted_user_id,
+                quoted_user_name or "不明なユーザー"
+            )
+
+
+            # ==================================
+            # LINE通知
+            # ==================================
+
+            line_message = (
+                "🚨 荒らし登録！\n\n"
+                f"👤 {quoted_user_name or '不明なユーザー'}\n\n"
+                "📋 荒らし名簿に登録しました。\n\n"
+                "名簿を見る場合は\n"
+                "!荒らし一覧\n\n"
+                "退会対象を確認する場合は\n"
+                "!kick"
+            )
+
+
+            if reply_token:
+
+                reply_message(
+                    reply_token,
+                    line_message
+                )
+
+
+            # ==================================
+            # Discord通知
+            # ==================================
+
+            send_discord_register_notification(
+                quoted_user_name or "不明なユーザー",
+                quoted_user_id
+            )
+
+            continue
+
+
+        # ==================================
+        # !kick
+        # ==================================
+
+        if text == "!kick":
+
+            if not group_id:
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ このコマンドは"
+                        "グループ内で使用してください。"
+                    )
+
+                continue
+
+
+            # ==================================
+            # 最後に登録された荒らし
+            # ==================================
+
+            target_user_id = last_spam_user.get(
+                group_id
+            )
+
+
+            if not target_user_id:
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ 荒らし対象がありません。\n\n"
+                        "荒らしにしたい人のメッセージに返信して\n"
+                        "!荒らし\n"
+                        "と入力してください。"
+                    )
+
+                continue
+
+
+            target_name = user_names.get(
+                target_user_id,
+                "不明なユーザー"
+            )
+
+
+            # ==================================
+            # LINEにはIDを表示しない
+            # ==================================
+
+            if reply_token:
+
+                reply_message(
+                    reply_token,
+                    "⚠️ 退会対象ユーザー\n\n"
+                    f"👤 {target_name}\n\n"
+                    "管理者がLINEグループから"
+                    "退会処理してください。"
+                )
+
+
+            # ==================================
+            # DiscordにはID表示
+            # ==================================
+
+            send_discord_kick_notification(
+                target_name,
+                target_user_id
+            )
+
+            continue
+
+
+        # ==================================
+        # !id
+        # ==================================
+
+        if text == "!id":
+
+            if reply_token:
+
+                reply_message(
+                    reply_token,
+                    "🆔 LINE User IDを\n"
+                    "Discordへ送信しました。"
+                )
+
+
+            send_discord_id_notification(
+                user_name,
+                user_id
+            )
 
             continue
 
@@ -815,7 +1242,11 @@ def callback():
             )
 
 
-            # 荒らし名簿へ自動登録
+            # ==================================
+            # 禁句を使った本人を
+            # 自動で荒らし登録
+            # ==================================
+
             register_spam_user(
                 group_id,
                 user_id,
@@ -823,7 +1254,10 @@ def callback():
             )
 
 
+            # ==================================
             # Discord禁句通知
+            # ==================================
+
             send_discord_forbidden_notification(
                 user_name,
                 user_id,
@@ -832,156 +1266,14 @@ def callback():
             )
 
 
+            # ==================================
             # Discord荒らし通知
+            # ==================================
+
             send_discord_notification(
                 user_name,
                 user_id,
                 text
-            )
-
-            continue
-
-
-        # ==================================
-        # !id
-        # ==================================
-
-        if text == "!id":
-
-            if reply_token:
-
-                reply_message(
-                    reply_token,
-                    "🆔 LINE User IDを\n"
-                    "Discordへ送信しました。"
-                )
-
-
-            send_discord_id_notification(
-                user_name,
-                user_id
-            )
-
-            continue
-
-
-        # ==================================
-        # !荒らし
-        # ==================================
-
-        if text == "!荒らし":
-
-            if not group_id:
-
-                if reply_token:
-
-                    reply_message(
-                        reply_token,
-                        "⚠️ このコマンドは"
-                        "グループ内で使用してください。"
-                    )
-
-                continue
-
-
-            # 名簿へ登録
-            register_spam_user(
-                group_id,
-                user_id,
-                user_name
-            )
-
-
-            # LINE通知
-            line_message = (
-                "🚨 荒らし登録！\n\n"
-                f"👤 {user_name}\n\n"
-                "📋 荒らし名簿に登録しました。\n\n"
-                "名簿を見る場合は\n"
-                "!荒らし一覧\n\n"
-                "退会対象を確認する場合は\n"
-                "!kick"
-            )
-
-
-            if reply_token:
-
-                reply_message(
-                    reply_token,
-                    line_message
-                )
-
-
-            # Discord通知
-            send_discord_notification(
-                user_name,
-                user_id,
-                text
-            )
-
-            continue
-
-
-        # ==================================
-        # !kick
-        # ==================================
-
-        if text == "!kick":
-
-            if not group_id:
-
-                if reply_token:
-
-                    reply_message(
-                        reply_token,
-                        "⚠️ このコマンドは"
-                        "グループ内で使用してください。"
-                    )
-
-                continue
-
-
-            target_user_id = last_spam_user.get(
-                group_id
-            )
-
-
-            if not target_user_id:
-
-                if reply_token:
-
-                    reply_message(
-                        reply_token,
-                        "⚠️ 荒らし対象がありません。\n\n"
-                        "!荒らし\n"
-                        "で荒らし登録してください。"
-                    )
-
-                continue
-
-
-            target_name = user_names.get(
-                target_user_id,
-                "不明なユーザー"
-            )
-
-
-            # LINEにはIDを表示しない
-            if reply_token:
-
-                reply_message(
-                    reply_token,
-                    "⚠️ 退会対象ユーザー\n\n"
-                    f"👤 {target_name}\n\n"
-                    "管理者がLINEグループから"
-                    "退会処理してください。"
-                )
-
-
-            # DiscordにはID表示
-            send_discord_kick_notification(
-                target_name,
-                target_user_id
             )
 
             continue
