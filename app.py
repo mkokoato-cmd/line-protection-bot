@@ -132,7 +132,7 @@ def reply_message(reply_token, text):
 
 
 # ==========================================
-# Discord荒らし通知
+# Discord通知
 # ==========================================
 
 def send_discord_notification(
@@ -277,6 +277,55 @@ def send_discord_kick_notification(
 
         print(
             "Discord kick notification error:",
+            e
+        )
+
+
+# ==========================================
+# Discord ID確認通知
+# ==========================================
+
+def send_discord_id_notification(
+    user_name,
+    user_id
+):
+
+    if not DISCORD_WEBHOOK_URL:
+
+        print(
+            "DISCORD_WEBHOOK_URL が設定されていません"
+        )
+
+        return
+
+    discord_message = (
+        "🆔 LINE User ID確認\n\n"
+        f"👤 名前：{user_name}\n"
+        f"🆔 LINE User ID：{user_id}"
+    )
+
+    data = {
+        "content": discord_message
+    }
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
+        print(
+            "Discord ID:",
+            response.status_code,
+            response.text
+        )
+
+    except Exception as e:
+
+        print(
+            "Discord ID notification error:",
             e
         )
 
@@ -540,13 +589,22 @@ def callback():
 
         if text == "!id":
 
+            # LINEにはUser IDを表示しない
             if reply_token:
 
                 reply_message(
                     reply_token,
-                    "🆔 あなたのLINE User ID\n\n"
-                    f"{user_id}"
+                    "🆔 LINE User IDを\n"
+                    "Discordへ送信しました。"
                 )
+
+
+            # Discordだけに
+            # 名前＋LINE User IDを送信
+            send_discord_id_notification(
+                user_name,
+                user_id
+            )
 
             continue
 
