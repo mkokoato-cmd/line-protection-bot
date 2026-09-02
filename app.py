@@ -107,6 +107,7 @@ def reply_message(reply_token, text):
     }
 
     try:
+
         response = requests.post(
             url,
             headers=headers,
@@ -121,7 +122,11 @@ def reply_message(reply_token, text):
         )
 
     except Exception as e:
-        print("LINE reply error:", e)
+
+        print(
+            "LINE reply error:",
+            e
+        )
 
 
 # ==========================================
@@ -136,7 +141,11 @@ def send_discord_notification(
 ):
 
     if not DISCORD_WEBHOOK_URL:
-        print("DISCORD_WEBHOOK_URL が設定されていません")
+
+        print(
+            "DISCORD_WEBHOOK_URL が設定されていません"
+        )
+
         return
 
     # ======================================
@@ -229,6 +238,7 @@ def check_spam(user_id):
     now = time.time()
 
     if user_id not in user_messages:
+
         user_messages[user_id] = []
 
     # 古い履歴を削除
@@ -241,10 +251,13 @@ def check_spam(user_id):
     # 今回のメッセージを追加
     user_messages[user_id].append(now)
 
-    count = len(user_messages[user_id])
+    count = len(
+        user_messages[user_id]
+    )
 
     # 連投回数が基準以上なら荒らし
     if count >= SPAM_COUNT_LIMIT:
+
         return True, count
 
     return False, count
@@ -274,6 +287,7 @@ def callback():
         body,
         signature
     ):
+
         abort(400)
 
     try:
@@ -296,6 +310,7 @@ def callback():
 
         # メッセージイベント以外は無視
         if event.get("type") != "message":
+
             continue
 
         message = event.get(
@@ -305,6 +320,7 @@ def callback():
 
         # テキスト以外は無視
         if message.get("type") != "text":
+
             continue
 
         # ==================================
@@ -331,7 +347,9 @@ def callback():
 
         # User IDが取れなければ処理しない
         if not user_id:
+
             continue
+
 
         # ==================================
         # ユーザー名取得
@@ -340,6 +358,25 @@ def callback():
         user_name = get_user_name(
             user_id
         )
+
+
+        # ==================================
+        # LINE User ID表示コマンド
+        # ==================================
+
+        if text.strip() == "!id":
+
+            if reply_token:
+
+                reply_message(
+                    reply_token,
+                    "🆔 あなたのLINE User ID\n\n"
+                    f"{user_id}"
+                )
+
+            # !id は荒らしカウントしない
+            continue
+
 
         # ==================================
         # 荒らし判定
@@ -366,10 +403,11 @@ def callback():
 
                 last_warning_time[user_id] = now
 
+
                 # ==================================
                 # LINE通知
                 #
-                # ★ここにはUser IDを書かない
+                # ★LINEにはUser IDを表示しない
                 # ==================================
 
                 line_message = (
@@ -387,6 +425,7 @@ def callback():
                         reply_token,
                         line_message
                     )
+
 
                 # ==================================
                 # Discord通知
