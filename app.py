@@ -32,13 +32,8 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 # 荒らし検知設定
 # ==========================================
 
-# 何秒以内の連投を調べるか
 SPAM_TIME_WINDOW = 10
-
-# 何回以上送ったら荒らしと判定するか
 SPAM_COUNT_LIMIT = 5
-
-# 同じ荒らしについて何秒ごとに警告するか
 WARNING_COOLDOWN = 60
 
 
@@ -48,8 +43,17 @@ WARNING_COOLDOWN = 60
 
 user_messages = {}
 
-# 最後に警告した時間
 last_warning_time = {}
+
+
+# ==========================================
+# グループごとの最後の荒らし
+# ==========================================
+
+last_spam_user = {}
+
+# ユーザーID → 名前
+user_names = {}
 
 
 # ==========================================
@@ -148,10 +152,6 @@ def send_discord_notification(
 
         return
 
-    # ======================================
-    # DiscordだけにUser IDを表示
-    # ======================================
-
     discord_message = (
         "🚨 荒らし検知！\n\n"
         f"👤 名前：{user_name}\n"
@@ -182,6 +182,51 @@ def send_discord_notification(
 
         print(
             "Discord notification error:",
+            e
+        )
+
+
+# ==========================================
+# Discordにキック対象通知
+# ==========================================
+
+def send_discord_kick_notification(
+    user_name,
+    user_id
+):
+
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    discord_message = (
+        "⚠️ 退会対象通知\n\n"
+        f"👤 名前：{user_name}\n"
+        f"🆔 LINE User ID：{user_id}\n\n"
+        "管理者による確認・退会処理が必要です。"
+    )
+
+    data = {
+        "content": discord_message
+    }
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
+        print(
+            "Discord kick notification:",
+            response.status_code,
+            response.text
+        )
+
+    except Exception as e:
+
+        print(
+            "Discord kick notification error:",
             e
         )
 
@@ -241,21 +286,18 @@ def check_spam(user_id):
 
         user_messages[user_id] = []
 
-    # 古い履歴を削除
     user_messages[user_id] = [
         timestamp
         for timestamp in user_messages[user_id]
         if now - timestamp <= SPAM_TIME_WINDOW
     ]
 
-    # 今回のメッセージを追加
     user_messages[user_id].append(now)
 
     count = len(
         user_messages[user_id]
     )
 
-    # 連投回数が基準以上なら荒らし
     if count >= SPAM_COUNT_LIMIT:
 
         return True, count
@@ -308,9 +350,7 @@ def callback():
 
     for event in events:
 
-        # メッセージイベント以外は無視
         if event.get("type") != "message":
-
             continue
 
         message = event.get(
@@ -318,19 +358,18 @@ def callback():
             {}
         )
 
-        # テキスト以外は無視
         if message.get("type") != "text":
-
             continue
 
+
         # ==================================
-        # 必要情報取得
+        # 情報取得
         # ==================================
 
         text = message.get(
             "text",
             ""
-        )
+        ).strip()
 
         reply_token = event.get(
             "replyToken"
@@ -345,9 +384,11 @@ def callback():
             "userId"
         )
 
-        # User IDが取れなければ処理しない
-        if not user_id:
+        group_id = source.get(
+            "groupId"
+        )
 
+        if not user_id:
             continue
 
 
@@ -359,12 +400,14 @@ def callback():
             user_id
         )
 
+        user_names[user_id] = user_name
+
 
         # ==================================
-        # LINE User ID表示コマンド
+        # !id
         # ==================================
 
-        if text.strip() == "!id":
+        if text == "!id":
 
             if reply_token:
 
@@ -374,7 +417,73 @@ def callback():
                     f"{user_id}"
                 )
 
-            # !id は荒らしカウントしない
+            continue
+
+
+        # ==================================
+        # !kick
+        # ==================================
+        #
+        # 直前に荒らし判定された人を対象
+        #
+
+        if text == "!kick":
+
+            if not group_id:
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ このコマンドはグループ内で使用してください。"
+                    )
+
+                continue
+
+
+            target_user_id = last_spam_user.get(
+                group_id
+            )
+
+            if not target_user_id:
+
+                if reply_token:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ 退会対象の荒らしユーザーがありません。\n\n"
+                        "まず荒らし検知を発生させてください。"
+                    )
+
+                continue
+
+
+            target_name = user_names.get(
+                target_user_id,
+                "不明なユーザー"
+            )
+
+
+            # LINEにはIDを表示しない
+
+            if reply_token:
+
+                reply_message(
+                    reply_token,
+                    "⚠️ 退会対象ユーザー\n\n"
+                    f"👤 {target_name}\n\n"
+                    "管理者がLINEグループから"
+                    "退会処理してください。"
+                )
+
+
+            # DiscordにはIDを通知
+
+            send_discord_kick_notification(
+                target_name,
+                target_user_id
+            )
+
             continue
 
 
@@ -386,7 +495,15 @@ def callback():
             user_id
         )
 
+
         if is_spam:
+
+            # グループ内の最後の荒らしを記録
+
+            if group_id:
+
+                last_spam_user[group_id] = user_id
+
 
             now = time.time()
 
@@ -394,6 +511,7 @@ def callback():
                 user_id,
                 0
             )
+
 
             # ==================================
             # 警告クールダウン
@@ -406,8 +524,6 @@ def callback():
 
                 # ==================================
                 # LINE通知
-                #
-                # ★LINEにはUser IDを表示しない
                 # ==================================
 
                 line_message = (
@@ -415,9 +531,13 @@ def callback():
                     f"👤 {user_name}\n\n"
                     "⚠️ 短時間に大量のメッセージを"
                     "送信しています。\n"
-                    "管理者は必要に応じて退会処理"
-                    "してください。"
+                    "管理者は必要に応じて"
+                    "退会処理してください。\n\n"
+                    "退会対象を確認する場合は\n"
+                    "!kick\n"
+                    "と入力してください。"
                 )
+
 
                 if reply_token:
 
@@ -429,8 +549,6 @@ def callback():
 
                 # ==================================
                 # Discord通知
-                #
-                # ★User IDはDiscordだけ
                 # ==================================
 
                 send_discord_notification(
