@@ -30,6 +30,18 @@ DISCORD_WEBHOOK_URL = os.environ.get(
 
 
 # ==========================================
+# 禁句設定
+# ==========================================
+
+FORBIDDEN_WORDS = [
+    "殺す",
+    "死ね",
+    "死んで",
+    "キモイ"
+]
+
+
+# ==========================================
 # 荒らしユーザー保存
 # ==========================================
 
@@ -166,6 +178,60 @@ def send_discord_notification(
 
         print(
             "Discord notification error:",
+            e
+        )
+
+
+# ==========================================
+# Discord禁句通知
+# ==========================================
+
+def send_discord_forbidden_notification(
+    user_name,
+    user_id,
+    text,
+    forbidden_word
+):
+
+    if not DISCORD_WEBHOOK_URL:
+
+        print(
+            "DISCORD_WEBHOOK_URL が設定されていません"
+        )
+
+        return
+
+    discord_message = (
+        "🚫 禁句検知！\n\n"
+        f"👤 名前：{user_name}\n"
+        f"🆔 LINE User ID：{user_id}\n"
+        f"🚨 禁句：{forbidden_word}\n"
+        f"💬 メッセージ：{text}\n\n"
+        "⚠️ 荒らしとして自動登録しました。"
+    )
+
+    data = {
+        "content": discord_message
+    }
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
+        print(
+            "Discord forbidden:",
+            response.status_code,
+            response.text
+        )
+
+    except Exception as e:
+
+        print(
+            "Discord forbidden notification error:",
             e
         )
 
@@ -362,6 +428,75 @@ def callback():
         )
 
         user_names[user_id] = user_name
+
+
+        # ==================================
+        # 禁句検知
+        # ==================================
+
+        detected_forbidden_word = None
+
+        for forbidden_word in FORBIDDEN_WORDS:
+
+            if forbidden_word in text:
+
+                detected_forbidden_word = (
+                    forbidden_word
+                )
+
+                break
+
+
+        # ==================================
+        # 禁句が見つかった場合
+        # ==================================
+
+        if detected_forbidden_word:
+
+            print(
+                "禁句検知:",
+                user_name,
+                user_id,
+                detected_forbidden_word,
+                text
+            )
+
+
+            # ==================================
+            # 荒らしユーザーとして登録
+            # ==================================
+
+            if group_id:
+
+                last_spam_user[
+                    group_id
+                ] = user_id
+
+
+            # ==================================
+            # Discord禁句通知
+            # ==================================
+
+            send_discord_forbidden_notification(
+                user_name,
+                user_id,
+                text,
+                detected_forbidden_word
+            )
+
+
+            # ==================================
+            # Discord荒らし通知
+            # ==================================
+
+            send_discord_notification(
+                user_name,
+                user_id,
+                text
+            )
+
+
+            continue
 
 
         # ==================================
