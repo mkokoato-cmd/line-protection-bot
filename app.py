@@ -431,6 +431,42 @@ def callback():
 
 
         # ==================================
+        # 禁句一覧
+        # ==================================
+
+        if text == "禁句一覧":
+
+            if reply_token:
+
+                if FORBIDDEN_WORDS:
+
+                    word_list = "\n".join(
+                        f"{i}. {word}"
+                        for i, word in enumerate(
+                            FORBIDDEN_WORDS,
+                            start=1
+                        )
+                    )
+
+                    reply_message(
+                        reply_token,
+                        "🚫 禁句一覧\n\n"
+                        f"{word_list}\n\n"
+                        f"合計：{len(FORBIDDEN_WORDS)}個"
+                    )
+
+                else:
+
+                    reply_message(
+                        reply_token,
+                        "🚫 禁句一覧\n\n"
+                        "現在、禁句は登録されていません。"
+                    )
+
+            continue
+
+
+        # ==================================
         # 禁句検知
         # ==================================
 
@@ -494,7 +530,6 @@ def callback():
                 user_id,
                 text
             )
-
 
             continue
 
