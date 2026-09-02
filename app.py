@@ -26,35 +26,33 @@ LINE_API = "https://api.line.me/v2/bot"
 # Discord設定
 # ==========================================
 
-DISCORD_WEBHOOK_URL = os.environ.get(
-    "DISCORD_WEBHOOK_URL"
-)
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 
 # ==========================================
-# 荒らし対策設定
+# スパム設定
 # ==========================================
 
-SPAM_LIMIT = 5
+SPAM_COUNT = 5
 SPAM_WINDOW = 10
 
 
 # ==========================================
-# 追い出し記録設定
+# 追い出し・退会検知設定
 # ==========================================
 
 KICK_WINDOW = 60
 
 
 # ==========================================
-# ユーザー記録
+# ユーザー情報
 # ==========================================
 
 users = {}
 
 
 # ==========================================
-# グループごとの退出記録
+# グループごとの退会人数記録
 # ==========================================
 
 kick_records = {}
@@ -70,9 +68,7 @@ def verify_signature(body, signature):
         return False
 
     if not CHANNEL_SECRET:
-        print(
-            "CHANNEL_SECRET が設定されていません"
-        )
+        print("CHANNEL_SECRET が設定されていません")
         return False
 
     hash_value = hmac.new(
@@ -98,21 +94,18 @@ def verify_signature(body, signature):
 def reply_message(reply_token, text):
 
     if not reply_token:
+        print("reply_token がありません")
         return False
 
     if not CHANNEL_ACCESS_TOKEN:
-
-        print(
-            "CHANNEL_ACCESS_TOKEN が設定されていません"
-        )
-
+        print("CHANNEL_ACCESS_TOKEN が設定されていません")
         return False
+
+    url = f"{LINE_API}/message/reply"
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": (
-            f"Bearer {CHANNEL_ACCESS_TOKEN}"
-        )
+        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
     }
 
     data = {
@@ -128,54 +121,80 @@ def reply_message(reply_token, text):
     try:
 
         response = requests.post(
-            f"{LINE_API}/message/reply",
+            url,
             headers=headers,
             json=data,
             timeout=10
         )
 
-        if response.status_code == 200:
-
-            return True
-
         print(
-            "LINE返信失敗:",
+            "LINE返信:",
             response.status_code,
             response.text
         )
 
+        return response.status_code == 200
+
     except Exception as e:
 
-        print(
-            "LINE返信エラー:",
-            e
-        )
+        print("LINE返信エラー:", e)
 
-    return False
+        return False
 
 
 # ==========================================
-# LINEプロフィール取得
+# Discord通知
+# ==========================================
+
+def send_discord(message):
+
+    if not DISCORD_WEBHOOK_URL:
+        print("DISCORD_WEBHOOK_URL が設定されていません")
+        return False
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json={
+                "content": message
+            },
+            timeout=10
+        )
+
+        print(
+            "Discord通知:",
+            response.status_code,
+            response.text
+        )
+
+        return response.status_code in [200, 204]
+
+    except Exception as e:
+
+        print("Discord通知エラー:", e)
+
+        return False
+
+
+# ==========================================
+# ユーザープロフィール取得
 # ==========================================
 
 def get_user_profile(group_id, user_id):
 
-    if not group_id or not user_id:
-        return None
-
     if not CHANNEL_ACCESS_TOKEN:
         return None
 
-    headers = {
-        "Authorization": (
-            f"Bearer {CHANNEL_ACCESS_TOKEN}"
-        )
-    }
-
     url = (
         f"{LINE_API}/group/"
-        f"{group_id}/member/{user_id}"
+        f"{group_id}/member/"
+        f"{user_id}"
     )
+
+    headers = {
+        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+    }
 
     try:
 
@@ -185,22 +204,19 @@ def get_user_profile(group_id, user_id):
             timeout=10
         )
 
-        if response.status_code == 200:
-
-            return response.json()
-
         print(
-            "プロフィール取得失敗:",
+            "プロフィール取得:",
             response.status_code,
             response.text
         )
 
+        if response.status_code == 200:
+
+            return response.json()
+
     except Exception as e:
 
-        print(
-            "プロフィール取得エラー:",
-            e
-        )
+        print("プロフィール取得エラー:", e)
 
     return None
 
@@ -211,22 +227,14 @@ def get_user_profile(group_id, user_id):
 
 def get_group_name(group_id):
 
-    if not group_id:
-        return "不明なグループ"
-
     if not CHANNEL_ACCESS_TOKEN:
         return "不明なグループ"
 
-    headers = {
-        "Authorization": (
-            f"Bearer {CHANNEL_ACCESS_TOKEN}"
-        )
-    }
+    url = f"{LINE_API}/group/{group_id}/summary"
 
-    url = (
-        f"{LINE_API}/group/"
-        f"{group_id}/summary"
-    )
+    headers = {
+        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+    }
 
     try:
 
@@ -234,6 +242,12 @@ def get_group_name(group_id):
             url,
             headers=headers,
             timeout=10
+        )
+
+        print(
+            "グループ情報:",
+            response.status_code,
+            response.text
         )
 
         if response.status_code == 200:
@@ -245,174 +259,153 @@ def get_group_name(group_id):
                 "不明なグループ"
             )
 
-        print(
-            "グループ名取得失敗:",
-            response.status_code,
-            response.text
-        )
-
     except Exception as e:
 
-        print(
-            "グループ名取得エラー:",
-            e
-        )
+        print("グループ名取得エラー:", e)
 
     return "不明なグループ"
 
 
 # ==========================================
-# Discord通知
+# ユーザー名取得
 # ==========================================
 
-def send_discord(message):
+def get_member_name(group_id, user_id):
 
-    if not DISCORD_WEBHOOK_URL:
+    # まず保存済みの名前を確認
+    if user_id in users:
 
-        print(
-            "DISCORD_WEBHOOK_URL が設定されていません"
+        saved_name = users[user_id].get("name")
+
+        if saved_name:
+            return saved_name
+
+    # LINEから取得
+    profile = get_user_profile(
+        group_id,
+        user_id
+    )
+
+    if profile:
+
+        display_name = profile.get(
+            "displayName",
+            "名前不明"
         )
-
-        return False
-
-    data = {
-        "content": message
-    }
-
-    try:
-
-        response = requests.post(
-            DISCORD_WEBHOOK_URL,
-            json=data,
-            timeout=10
-        )
-
-        if response.status_code in [200, 204]:
-
-            return True
-
-        print(
-            "Discord通知失敗:",
-            response.status_code,
-            response.text
-        )
-
-    except Exception as e:
-
-        print(
-            "Discord通知エラー:",
-            e
-        )
-
-    return False
-
-
-# ==========================================
-# ユーザー名保存
-# ==========================================
-
-def save_user_name(user_id, name):
-
-    if not user_id:
-        return
-
-    if not name:
-        name = "不明"
-
-    if user_id not in users:
 
         users[user_id] = {
-            "name": name,
-            "messages": []
+            "name": display_name,
+            "messages": users.get(
+                user_id,
+                {}
+            ).get(
+                "messages",
+                []
+            )
         }
 
-    else:
+        return display_name
 
-        users[user_id]["name"] = name
-
-
-# ==========================================
-# スパム判定
-# ==========================================
-
-def check_spam(user_id):
-
-    now = time.time()
-
-    if not user_id:
-        return False
-
-    if user_id not in users:
-
-        users[user_id] = {
-            "name": "不明",
-            "messages": []
-        }
-
-    messages = users[user_id]["messages"]
-
-    # 古い記録を削除
-    messages[:] = [
-        timestamp
-        for timestamp in messages
-        if now - timestamp <= SPAM_WINDOW
-    ]
-
-    # 今回の投稿を追加
-    messages.append(now)
-
-    # 5回以上でスパム判定
-    if len(messages) >= SPAM_LIMIT:
-
-        # 検知後はカウントをリセット
-        users[user_id]["messages"] = []
-
-        return True
-
-    return False
+    return "名前不明"
 
 
 # ==========================================
-# 退出記録
+# 追い出し・退会人数を記録
 # ==========================================
 
 def register_kick(group_id, count):
 
     now = time.time()
 
-    if not group_id:
-        return count
-
     if group_id not in kick_records:
 
         kick_records[group_id] = []
 
-    # 古い記録を削除
-    kick_records[group_id] = [
-        timestamp
-        for timestamp in kick_records[group_id]
-        if now - timestamp <= KICK_WINDOW
-    ]
-
-    # 今回退出した人数分を追加
-    for _ in range(count):
-
-        kick_records[group_id].append(now)
-
-    return len(
-        kick_records[group_id]
+    kick_records[group_id].append(
+        {
+            "time": now,
+            "count": count
+        }
     )
 
+    # 60秒より古い記録を削除
+    kick_records[group_id] = [
+        record
+        for record in kick_records[group_id]
+        if now - record["time"] <= KICK_WINDOW
+    ]
+
+    total = sum(
+        record["count"]
+        for record in kick_records[group_id]
+    )
+
+    return total
+
 
 # ==========================================
-# Webhook
+# スパム検知
 # ==========================================
 
-@app.route(
-    "/webhook",
-    methods=["POST"]
-)
-def webhook():
+def check_spam(user_id):
+
+    now = time.time()
+
+    if user_id not in users:
+
+        users[user_id] = {
+            "name": "名前不明",
+            "messages": []
+        }
+
+    if "messages" not in users[user_id]:
+
+        users[user_id]["messages"] = []
+
+    # 現在時刻を追加
+    users[user_id]["messages"].append(now)
+
+    # 10秒より古い記録を削除
+    users[user_id]["messages"] = [
+        message_time
+        for message_time in users[user_id]["messages"]
+        if now - message_time <= SPAM_WINDOW
+    ]
+
+    count = len(
+        users[user_id]["messages"]
+    )
+
+    print(
+        f"スパムチェック: "
+        f"user={user_id} "
+        f"count={count}"
+    )
+
+    return count >= SPAM_COUNT
+
+
+# ==========================================
+# テスト用トップページ
+# ==========================================
+
+@app.route("/", methods=["GET"])
+def home():
+
+    return "LINE Protection Bot is running!"
+
+
+# ==========================================
+# LINE Webhook
+# ★ここが重要
+# ==========================================
+
+@app.route("/callback", methods=["POST"])
+def callback():
+
+    print("================================")
+    print("LINE Webhookを受信しました")
+    print("================================")
 
     body = request.get_data()
 
@@ -420,26 +413,24 @@ def webhook():
         "X-Line-Signature"
     )
 
-
-    # ======================================
-    # 署名チェック
-    # ======================================
+    # --------------------------------------
+    # 署名確認
+    # --------------------------------------
 
     if not verify_signature(
         body,
         signature
     ):
 
-        print(
-            "署名チェック失敗"
-        )
+        print("署名確認失敗")
 
         abort(400)
 
+    print("署名確認OK")
 
-    # ======================================
+    # --------------------------------------
     # JSON解析
-    # ======================================
+    # --------------------------------------
 
     try:
 
@@ -449,23 +440,26 @@ def webhook():
 
     except Exception as e:
 
-        print(
-            "JSON解析エラー:",
-            e
-        )
+        print("JSON解析エラー:", e)
 
         abort(400)
 
+    print(
+        "受信データ:",
+        json.dumps(
+            data,
+            ensure_ascii=False
+        )
+    )
+
+    # --------------------------------------
+    # イベント処理
+    # --------------------------------------
 
     events = data.get(
         "events",
         []
     )
-
-
-    # ======================================
-    # イベント処理
-    # ======================================
 
     for event in events:
 
@@ -475,27 +469,10 @@ def webhook():
                 "type"
             )
 
-            source = event.get(
-                "source",
-                {}
+            print(
+                "イベント:",
+                event_type
             )
-
-            source_type = source.get(
-                "type"
-            )
-
-            group_id = source.get(
-                "groupId"
-            )
-
-            user_id = source.get(
-                "userId"
-            )
-
-            reply_token = event.get(
-                "replyToken"
-            )
-
 
             # ==================================
             # メッセージ
@@ -503,17 +480,73 @@ def webhook():
 
             if event_type == "message":
 
+                source = event.get(
+                    "source",
+                    {}
+                )
+
+                user_id = source.get(
+                    "userId"
+                )
+
+                group_id = source.get(
+                    "groupId"
+                )
+
+                reply_token = event.get(
+                    "replyToken"
+                )
+
+                if not user_id:
+
+                    continue
+
+                # 名前取得
+                user_name = "名前不明"
+
+                if group_id:
+
+                    user_name = get_member_name(
+                        group_id,
+                        user_id
+                    )
+
+                else:
+
+                    profile = get_user_profile(
+                        group_id,
+                        user_id
+                    ) if group_id else None
+
+                    if profile:
+
+                        user_name = profile.get(
+                            "displayName",
+                            "名前不明"
+                        )
+
+                # 保存
+                if user_id not in users:
+
+                    users[user_id] = {
+                        "name": user_name,
+                        "messages": []
+                    }
+
+                else:
+
+                    users[user_id]["name"] = user_name
+
+                # テキストメッセージだけ処理
                 message = event.get(
                     "message",
                     {}
                 )
 
-                message_type = message.get(
+                if message.get(
                     "type"
-                )
+                ) != "text":
 
-                # テキスト以外は無視
-                if message_type != "text":
                     continue
 
                 text = message.get(
@@ -521,89 +554,54 @@ def webhook():
                     ""
                 )
 
-
-                # --------------------------------
-                # ユーザー名取得
-                # --------------------------------
-
-                user_name = "不明"
-
-                if group_id and user_id:
-
-                    profile = get_user_profile(
-                        group_id,
-                        user_id
-                    )
-
-                    if profile:
-
-                        user_name = profile.get(
-                            "displayName",
-                            "不明"
-                        )
-
-
-                # --------------------------------
-                # 名前保存
-                # --------------------------------
-
-                save_user_name(
-                    user_id,
-                    user_name
+                print(
+                    f"メッセージ: "
+                    f"{user_name}: "
+                    f"{text}"
                 )
 
-
-                # --------------------------------
                 # スパムチェック
-                # --------------------------------
-
-                spam_detected = check_spam(
+                is_spam = check_spam(
                     user_id
                 )
 
+                if is_spam:
 
-                if spam_detected:
-
-                    # LINE通知
-                    line_message = (
-                        "🚨 荒らし・スパムを検知しました。\n\n"
-                        f"👤 名前：{user_name}\n"
-                        f"🆔 User ID：{user_id}\n\n"
-                        "⚠️ 連続投稿をやめてください。"
+                    group_name = (
+                        get_group_name(group_id)
+                        if group_id
+                        else "個人チャット"
                     )
 
+                    warning = (
+                        "⚠️ 荒らし検知\n\n"
+                        f"👤 名前：{user_name}\n"
+                        f"💬 連投："
+                        f"{SPAM_COUNT}回以上\n"
+                        f"⏱️ 判定時間："
+                        f"{SPAM_WINDOW}秒以内\n\n"
+                        "⚠️ 管理者は確認してください。"
+                    )
+
+                    # LINEへ返信
                     reply_message(
                         reply_token,
-                        line_message
+                        warning
                     )
 
-
-                    # --------------------------------
-                    # グループ名
-                    # --------------------------------
-
-                    group_name = get_group_name(
-                        group_id
-                    )
-
-
-                    # --------------------------------
                     # Discord通知
-                    # --------------------------------
-
                     discord_message = (
-                        "🚨 **スパム・荒らし検知**\n\n"
-                        f"👤 ユーザー：**{user_name}**\n"
-                        f"🆔 User ID：{user_id}\n"
+                        "🚨 **荒らし検知**\n\n"
                         f"👥 グループ：{group_name}\n"
-                        f"💬 内容：{text[:500]}\n\n"
-                        "⚠️ 連続投稿を検知しました。"
+                        f"👤 名前：{user_name}\n"
+                        f"💬 内容：{text}\n"
+                        f"⚠️ {SPAM_COUNT}回以上/"
+                        f"{SPAM_WINDOW}秒以内"
                     )
 
                     send_discord(
                         discord_message
                     )
-
 
             # ==================================
             # メンバー追加
@@ -611,8 +609,18 @@ def webhook():
 
             elif event_type == "memberJoined":
 
-                if not group_id:
-                    continue
+                source = event.get(
+                    "source",
+                    {}
+                )
+
+                group_id = source.get(
+                    "groupId"
+                )
+
+                reply_token = event.get(
+                    "replyToken"
+                )
 
                 joined = event.get(
                     "joined",
@@ -624,104 +632,87 @@ def webhook():
                     []
                 )
 
-                if not members:
+                print(
+                    "メンバー追加:",
+                    members
+                )
+
+                if not group_id:
+
                     continue
 
                 group_name = get_group_name(
                     group_id
                 )
 
-
-                joined_names = []
-
+                names = []
 
                 for member in members:
 
-                    joined_user_id = member.get(
+                    user_id = member.get(
                         "userId"
                     )
 
-                    user_name = "不明"
+                    if not user_id:
 
+                        continue
 
-                    # --------------------------------
-                    # プロフィール取得
-                    # --------------------------------
-
-                    profile = get_user_profile(
+                    name = get_member_name(
                         group_id,
-                        joined_user_id
+                        user_id
                     )
 
-                    if profile:
+                    names.append(name)
 
-                        user_name = profile.get(
-                            "displayName",
-                            "不明"
-                        )
+                if names:
 
-
-                    # --------------------------------
-                    # 名前保存
-                    # --------------------------------
-
-                    save_user_name(
-                        joined_user_id,
-                        user_name
-                    )
-
-                    joined_names.append(
-                        user_name
-                    )
-
-
-                # --------------------------------
-                # LINE通知
-                # --------------------------------
-
-                if reply_token:
-
-                    names_text = "\n".join(
+                    joined_names = "\n".join(
                         f"👤 {name}"
-                        for name in joined_names
+                        for name in names
                     )
 
+                    message = (
+                        "✅ メンバー追加を検知しました\n\n"
+                        f"👥 グループ：{group_name}\n\n"
+                        f"{joined_names}\n\n"
+                        "🛡️ グループ保護Bot監視中"
+                    )
+
+                    # LINEへ返信
                     reply_message(
                         reply_token,
-                        "🟢 メンバー追加を検知しました。\n\n"
-                        f"{names_text}\n\n"
-                        "グループに追加されました。"
+                        message
                     )
 
+                    # Discord通知
+                    discord_message = (
+                        "✅ **メンバー追加**\n\n"
+                        f"👥 グループ：{group_name}\n\n"
+                        f"{joined_names}"
+                    )
 
-                # --------------------------------
-                # Discord通知
-                # --------------------------------
-
-                names_text = "\n".join(
-                    f"👤 {name}"
-                    for name in joined_names
-                )
-
-                discord_message = (
-                    "🟢 **メンバー追加検知**\n\n"
-                    f"{names_text}\n\n"
-                    f"👥 グループ：{group_name}"
-                )
-
-                send_discord(
-                    discord_message
-                )
-
+                    send_discord(
+                        discord_message
+                    )
 
             # ==================================
-            # メンバー退出
+            # メンバー退出・追い出し
             # ==================================
 
             elif event_type == "memberLeft":
 
-                if not group_id:
-                    continue
+                source = event.get(
+                    "source",
+                    {}
+                )
+
+                group_id = source.get(
+                    "groupId"
+                )
+
+                reply_token = event.get(
+                    "replyToken"
+                )
 
                 left = event.get(
                     "left",
@@ -733,150 +724,106 @@ def webhook():
                     []
                 )
 
-                if not members:
+                print(
+                    "メンバー退出:",
+                    members
+                )
+
+                if not group_id:
+
                     continue
 
                 group_name = get_group_name(
                     group_id
                 )
 
-
-                # --------------------------------
-                # 今回の退出人数
-                # --------------------------------
-
-                left_count = len(
-                    members
-                )
-
-
-                # --------------------------------
-                # 退出人数を記録
-                # --------------------------------
-
-                kick_count = register_kick(
-                    group_id,
-                    left_count
-                )
-
-
-                left_names = []
-
+                names = []
 
                 for member in members:
 
-                    left_user_id = member.get(
+                    user_id = member.get(
                         "userId"
                     )
 
-                    user_name = "不明"
+                    if not user_id:
 
+                        continue
 
-                    # --------------------------------
-                    # 保存済みの名前を取得
-                    # --------------------------------
-
-                    if left_user_id in users:
-
-                        user_name = users[
-                            left_user_id
-                        ].get(
-                            "name",
-                            "不明"
-                        )
-
-
-                    # --------------------------------
-                    # API取得も試す
-                    # --------------------------------
-
-                    profile = get_user_profile(
+                    name = get_member_name(
                         group_id,
-                        left_user_id
+                        user_id
                     )
 
-                    if profile:
+                    names.append(name)
 
-                        user_name = profile.get(
-                            "displayName",
-                            user_name
-                        )
+                # 退出人数
+                count = len(members)
 
+                if count == 0:
 
-                    left_names.append(
-                        user_name
+                    continue
+
+                # 60秒以内の累計
+                total_kicks = register_kick(
+                    group_id,
+                    count
+                )
+
+                if names:
+
+                    left_names = "\n".join(
+                        f"👤 {name}"
+                        for name in names
                     )
 
+                else:
 
-                # ==================================
-                # LINE通知
-                # ==================================
+                    left_names = "名前不明"
 
-                names_text = "\n".join(
-                    f"👤 {name}"
-                    for name in left_names
+                # ----------------------------------
+                # LINE警告
+                # ----------------------------------
+
+                warning = (
+                    "⚠️ メンバー退出を検知しました\n\n"
+                    f"👥 グループ：{group_name}\n\n"
+                    f"{left_names}\n\n"
+                    f"🚨 退出人数：{count}人\n"
+                    f"⏱️ 直近60秒："
+                    f"{total_kicks}人\n\n"
+                    "⚠️ 荒らしによる強制退会の"
+                    "可能性があります。\n"
+                    "管理者は確認してください。\n\n"
+                    "※LINEの仕様上、"
+                    "誰が追い出したかは"
+                    "取得できません。"
                 )
 
-
-                line_message = (
-                    "🚨 メンバー退出を検知しました。\n\n"
-                    f"{names_text}\n\n"
-                    f"👥 今回の退出：{left_count}人\n"
-                    f"📊 直近60秒の退出：{kick_count}人\n\n"
-                    "⚠️ 強制退会または\n"
-                    "自分から退会した可能性があります。"
+                # LINEへ返信
+                reply_message(
+                    reply_token,
+                    warning
                 )
 
-
-                # --------------------------------
-                # 1人でも荒らし警告
-                # --------------------------------
-
-                warning_message = (
-                    "🚨🚨【荒らし行為を検知】\n\n"
-                    f"👤 退出した人：\n{names_text}\n\n"
-                    f"👥 今回の退出：{left_count}人\n"
-                    f"📊 直近60秒の退出：{kick_count}人\n\n"
-                    "⚠️ 荒らしの可能性があります！\n\n"
-                    "※ LINEの仕様上、このイベントだけでは\n"
-                    "誰が追い出したかは取得できません。"
-                )
-
-
-                # --------------------------------
-                # LINE返信
-                # --------------------------------
-
-                # replyTokenは1イベントにつき1回だけ使用
-                if reply_token:
-
-                    reply_message(
-                        reply_token,
-                        warning_message
-                    )
-
-
-                # ==================================
+                # ----------------------------------
                 # Discord通知
-                # ==================================
+                # ----------------------------------
 
                 discord_message = (
-                    "🚨🚨 **荒らし行為を検知**\n\n"
-                    f"👤 退出した人：\n{names_text}\n\n"
-                    f"👥 今回の退出：**{left_count}人**\n"
-                    f"📊 直近60秒の退出：**{kick_count}人**\n"
-                    f"🏠 グループ：**{group_name}**\n\n"
-                    "⚠️ 荒らしの可能性があります！\n\n"
-                    "👤 実行者：**不明**\n"
-                    "※ LINEの仕様上、このイベントだけでは\n"
-                    "誰が追い出したかは取得できません。"
+                    "🚨 **メンバー退出検知**\n\n"
+                    f"👥 グループ：{group_name}\n\n"
+                    f"{left_names}\n\n"
+                    f"🚨 退出人数：{count}人\n"
+                    f"⏱️ 直近60秒："
+                    f"{total_kicks}人\n\n"
+                    "⚠️ 荒らしによる"
+                    "強制退会の可能性あり\n"
+                    "実行者：不明"
                 )
-
 
                 send_discord(
                     discord_message
                 )
-
 
         except Exception as e:
 
@@ -885,30 +832,17 @@ def webhook():
                 e
             )
 
-            # 1つのイベントでエラーが起きても
-            # 他のイベント処理を止めない
-            continue
+    # ==================================
+    # LINEには必ず200を返す
+    # ==================================
 
-
-    # ======================================
-    # 正常終了
-    # ======================================
+    print("Webhook処理完了")
 
     return "OK", 200
 
 
 # ==========================================
-# ヘルスチェック
-# ==========================================
-
-@app.route("/")
-def index():
-
-    return "LINE Protection Bot is running."
-
-
-# ==========================================
-# Render用ポート
+# Render起動
 # ==========================================
 
 if __name__ == "__main__":
@@ -918,6 +852,10 @@ if __name__ == "__main__":
             "PORT",
             10000
         )
+    )
+
+    print(
+        f"Bot起動: PORT={port}"
     )
 
     app.run(
