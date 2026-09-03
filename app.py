@@ -539,7 +539,7 @@ def get_roster(group_id):
 > Rblack list
 > Croom
 
-Croom >> room作製(Croom: @～)
+Croom >> room作製(Croom: @)
 
 Rblack >> 既読ブラリスを消したりします(Rblack:add or del: @mentions)
 
