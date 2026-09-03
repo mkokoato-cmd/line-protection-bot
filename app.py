@@ -537,22 +537,21 @@ def get_roster(group_id):
 
 > Rblack
 > Rblack list
-> Croom
+# Croom >> room作製(Croom)
 
-Croom >> room作製(Croom: @)
+# Rblack >> 既読ブリスを消したりします
 
-Rblack >> 既読ブラリスを消したりします(Rblack:add or del: @mentions)
+# Rblack list >> 既読ブリスを確認します
 
-Rblack list >> 既読ブラリスを確認します
+# add simple kicker >> 簡易キッカーを登録します
 
-add simple kicker >> 簡易キッカーを登録します
+# alltag >> オールメンション
 
-alltag >> オールメンション
+# amid >> 自分のmidを送信します
 
-amid >> 自分のmidを送信します
+# announce >> 取得したアナウンスを送信します
 
-announce >> 取得したアナウンスを送信します
-
+# audio >> テキストを音声にします
 audio >> テキストを音声にします(audio:text)
 
 auto join >> 自動参加をオン/オフにします
