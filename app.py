@@ -28,6 +28,30 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 
 # ==========================================
+# 管理者設定
+#
+# この2人がBot管理者
+# ==========================================
+
+ADMIN_USER_IDS = {
+    "Ud1066a8c57c09ff166fac3b7aa158785",
+    "Uaa70524f9b3b1be6c3bdcdccc23e3769",
+}
+
+
+# ==========================================
+# 管理者判定
+# ==========================================
+
+def is_admin(user_id):
+
+    if not user_id:
+        return False
+
+    return user_id in ADMIN_USER_IDS
+
+
+# ==========================================
 # 禁句設定
 # ==========================================
 
@@ -114,6 +138,9 @@ def verify_signature(body, signature):
 def reply_message(reply_token, text):
 
     if not CHANNEL_ACCESS_TOKEN:
+        return
+
+    if not reply_token:
         return
 
     url = f"{LINE_API}/message/reply"
@@ -262,7 +289,11 @@ def get_user_name(user_id, group_id=None):
 def send_discord_message(content):
 
     if not DISCORD_WEBHOOK_URL:
-        print("Discord Webhook未設定")
+
+        print(
+            "Discord Webhook未設定"
+        )
+
         return
 
     data = {
@@ -550,6 +581,9 @@ def callback():
 
     data = request.get_json()
 
+    if not data:
+        return "OK"
+
     events = data.get(
         "events",
         []
@@ -677,7 +711,6 @@ def callback():
                     f"{user_id}"
                 )
 
-                # Discordにも従来どおり通知
                 send_discord_id_notification(
                     user_name,
                     user_id
@@ -710,6 +743,30 @@ def callback():
             )
 
             continue
+
+        # ==================================
+        # 管理者チェック
+        #
+        # 管理者専用コマンド
+        # ==================================
+
+        admin_commands = [
+            "!荒らし一覧",
+            "!荒らし削除",
+            "!荒らし",
+            "!kick"
+        ]
+
+        if text in admin_commands:
+
+            if not is_admin(user_id):
+
+                reply_message(
+                    reply_token,
+                    "⛔ このコマンドは管理者専用です。"
+                )
+
+                continue
 
         # ==================================
         # 荒らし一覧
@@ -757,7 +814,7 @@ def callback():
                     + "\n".join(names)
                 )
 
-            # DiscordにはID付きで送信
+            # DiscordにはID付き
             send_discord_roster(
                 roster
             )
