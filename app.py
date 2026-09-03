@@ -1,12 +1,16 @@
 import os
-import sqlite3
 import hmac
 import hashlib
 import base64
 import requests
 
 from flask import Flask, request, abort
+from supabase import create_client
 
+
+# ==========================================
+# Flask
+# ==========================================
 
 app = Flask(__name__)
 
@@ -25,7 +29,40 @@ LINE_API = "https://api.line.me/v2/bot"
 # Discord設定
 # ==========================================
 
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+DISCORD_WEBHOOK_URL = os.environ.get(
+    "DISCORD_WEBHOOK_URL"
+)
+
+
+# ==========================================
+# Supabase設定
+# ==========================================
+
+SUPABASE_URL = os.environ.get(
+    "SUPABASE_URL"
+)
+
+SUPABASE_KEY = os.environ.get(
+    "SUPABASE_KEY"
+)
+
+
+if not SUPABASE_URL:
+    raise RuntimeError(
+        "SUPABASE_URLが設定されていません"
+    )
+
+
+if not SUPABASE_KEY:
+    raise RuntimeError(
+        "SUPABASE_KEYが設定されていません"
+    )
+
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
 
 
 # ==========================================
@@ -38,6 +75,7 @@ ADMIN_USER_IDS = {
 
 
 def is_admin(user_id):
+
     if not user_id:
         return False
 
@@ -57,118 +95,262 @@ FORBIDDEN_WORDS = [
 
 
 # ==========================================
-# SQLite保存場所
-# ==========================================
-
-DB_PATH = os.environ.get(
-    "DB_PATH",
-    "/var/data/line_protection.db"
-)
-
-
-# ==========================================
-# 一時保存
+# メモリキャッシュ
 # ==========================================
 
 user_names = {}
 
-message_users = {}
 
-message_groups = {}
+# ==========================================
+# Supabase
+# ユーザー名保存
+# ==========================================
+
+def save_user_name(user_id, user_name):
+
+    if not user_id:
+        return
+
+    if not user_name:
+        user_name = "不明"
+
+    try:
+
+        supabase.table(
+            "user_profiles"
+        ).upsert(
+            {
+                "user_id": user_id,
+                "user_name": user_name
+            },
+            on_conflict="user_id"
+        ).execute()
+
+    except Exception as e:
+
+        print(
+            "Supabaseユーザー名保存エラー:",
+            e
+        )
 
 
 # ==========================================
-# データベース初期化
+# Supabase
+# キャッシュユーザー名取得
 # ==========================================
 
-def init_db():
+def get_cached_user_name(user_id):
 
-    folder = os.path.dirname(DB_PATH)
+    if not user_id:
+        return None
 
-    if folder:
-        os.makedirs(folder, exist_ok=True)
+    try:
 
-    conn = sqlite3.connect(DB_PATH)
+        result = supabase.table(
+            "user_profiles"
+        ).select(
+            "user_name"
+        ).eq(
+            "user_id",
+            user_id
+        ).limit(
+            1
+        ).execute()
 
-    cursor = conn.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS spam_users (
-            group_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            user_name TEXT,
-            PRIMARY KEY (group_id, user_id)
+        if result.data:
+
+            user_name = result.data[0].get(
+                "user_name"
+            )
+
+            if user_name:
+
+                user_names[user_id] = user_name
+
+                return user_name
+
+
+    except Exception as e:
+
+        print(
+            "Supabaseユーザー名取得エラー:",
+            e
         )
-    """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS last_spam (
-            group_id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL
+
+    return None
+
+
+# ==========================================
+# Supabase
+# メッセージ保存
+# ==========================================
+
+def save_message(
+    message_id,
+    user_id,
+    group_id
+):
+
+    if not message_id:
+        return
+
+    if not user_id:
+        return
+
+
+    try:
+
+        supabase.table(
+            "message_history"
+        ).upsert(
+            {
+                "message_id": message_id,
+                "user_id": user_id,
+                "group_id": group_id
+            },
+            on_conflict="message_id"
+        ).execute()
+
+
+    except Exception as e:
+
+        print(
+            "Supabaseメッセージ保存エラー:",
+            e
         )
-    """)
 
-    conn.commit()
 
-    conn.close()
+# ==========================================
+# Supabase
+# メッセージ情報取得
+# ==========================================
 
-    print("SQLite初期化完了:", DB_PATH)
+def get_message_info(message_id):
+
+    if not message_id:
+        return None
+
+
+    try:
+
+        result = supabase.table(
+            "message_history"
+        ).select(
+            "user_id, group_id"
+        ).eq(
+            "message_id",
+            message_id
+        ).limit(
+            1
+        ).execute()
+
+
+        if result.data:
+
+            return result.data[0]
+
+
+    except Exception as e:
+
+        print(
+            "Supabaseメッセージ取得エラー:",
+            e
+        )
+
+
+    return None
 
 
 # ==========================================
 # 荒らし登録
 # ==========================================
 
-def register_spam_user(group_id, user_id, user_name):
+def register_spam_user(
+    group_id,
+    user_id,
+    user_name
+):
 
     if not group_id:
-        return
+        return False
 
     if not user_id:
-        return
+        return False
 
-    conn = sqlite3.connect(DB_PATH)
 
-    cursor = conn.cursor()
+    try:
 
-    cursor.execute("""
-        INSERT OR REPLACE INTO spam_users
-        (group_id, user_id, user_name)
-        VALUES (?, ?, ?)
-    """, (
-        group_id,
-        user_id,
-        user_name
-    ))
+        # 荒らし登録
 
-    cursor.execute("""
-        INSERT OR REPLACE INTO last_spam
-        (group_id, user_id)
-        VALUES (?, ?)
-    """, (
-        group_id,
-        user_id
-    ))
+        supabase.table(
+            "spam_users"
+        ).upsert(
+            {
+                "group_id": group_id,
+                "user_id": user_id,
+                "user_name": user_name
+            },
+            on_conflict="group_id,user_id"
+        ).execute()
 
-    conn.commit()
 
-    conn.close()
+        # 最後に登録した荒らし
 
-    user_names[user_id] = user_name
+        supabase.table(
+            "last_spam"
+        ).upsert(
+            {
+                "group_id": group_id,
+                "user_id": user_id
+            },
+            on_conflict="group_id"
+        ).execute()
 
-    print(
-        "荒らし登録:",
-        group_id,
-        user_id,
-        user_name
-    )
+
+        # ユーザー名保存
+
+        save_user_name(
+            user_id,
+            user_name
+        )
+
+
+        # メモリキャッシュ
+
+        user_names[user_id] = user_name
+
+
+        print(
+            "荒らし登録:",
+            group_id,
+            user_id,
+            user_name
+        )
+
+
+        return True
+
+
+    except Exception as e:
+
+        print(
+            "Supabase荒らし登録エラー:",
+            e
+        )
+
+        return False
 
 
 # ==========================================
 # 荒らし削除
 # ==========================================
 
-def delete_spam_user(group_id, user_id):
+def delete_spam_user(
+    group_id,
+    user_id
+):
 
     if not group_id:
         return False
@@ -176,58 +358,85 @@ def delete_spam_user(group_id, user_id):
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_PATH)
 
-    cursor = conn.cursor()
+    try:
 
-    cursor.execute("""
-        SELECT user_name
-        FROM spam_users
-        WHERE group_id = ?
-        AND user_id = ?
-    """, (
-        group_id,
-        user_id
-    ))
+        # 登録確認
 
-    result = cursor.fetchone()
+        result = supabase.table(
+            "spam_users"
+        ).select(
+            "user_id"
+        ).eq(
+            "group_id",
+            group_id
+        ).eq(
+            "user_id",
+            user_id
+        ).limit(
+            1
+        ).execute()
 
-    if not result:
 
-        conn.close()
+        if not result.data:
+
+            return False
+
+
+        # 荒らし削除
+
+        supabase.table(
+            "spam_users"
+        ).delete().eq(
+            "group_id",
+            group_id
+        ).eq(
+            "user_id",
+            user_id
+        ).execute()
+
+
+        # last_spamからも削除
+
+        supabase.table(
+            "last_spam"
+        ).delete().eq(
+            "group_id",
+            group_id
+        ).eq(
+            "user_id",
+            user_id
+        ).execute()
+
+
+        print(
+            "荒らし削除:",
+            group_id,
+            user_id
+        )
+
+
+        return True
+
+
+    except Exception as e:
+
+        print(
+            "Supabase荒らし削除エラー:",
+            e
+        )
 
         return False
-
-    cursor.execute("""
-        DELETE FROM spam_users
-        WHERE group_id = ?
-        AND user_id = ?
-    """, (
-        group_id,
-        user_id
-    ))
-
-    cursor.execute("""
-        DELETE FROM last_spam
-        WHERE group_id = ?
-        AND user_id = ?
-    """, (
-        group_id,
-        user_id
-    ))
-
-    conn.commit()
-
-    conn.close()
-
-    return True
 
 
 # ==========================================
 # 荒らしか確認
 # ==========================================
 
-def is_spam_user(group_id, user_id):
+def is_spam_user(
+    group_id,
+    user_id
+):
 
     if not group_id:
         return False
@@ -235,26 +444,37 @@ def is_spam_user(group_id, user_id):
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_PATH)
 
-    cursor = conn.cursor()
+    try:
 
-    cursor.execute("""
-        SELECT 1
-        FROM spam_users
-        WHERE group_id = ?
-        AND user_id = ?
-        LIMIT 1
-    """, (
-        group_id,
-        user_id
-    ))
+        result = supabase.table(
+            "spam_users"
+        ).select(
+            "user_id"
+        ).eq(
+            "group_id",
+            group_id
+        ).eq(
+            "user_id",
+            user_id
+        ).limit(
+            1
+        ).execute()
 
-    result = cursor.fetchone()
 
-    conn.close()
+        return bool(
+            result.data
+        )
 
-    return result is not None
+
+    except Exception as e:
+
+        print(
+            "Supabase荒らし確認エラー:",
+            e
+        )
+
+        return False
 
 
 # ==========================================
@@ -266,30 +486,49 @@ def get_roster(group_id):
     if not group_id:
         return {}
 
-    conn = sqlite3.connect(DB_PATH)
 
-    cursor = conn.cursor()
+    try:
 
-    cursor.execute("""
-        SELECT user_id, user_name
-        FROM spam_users
-        WHERE group_id = ?
-        ORDER BY rowid ASC
-    """, (
-        group_id,
-    ))
+        result = supabase.table(
+            "spam_users"
+        ).select(
+            "user_id, user_name"
+        ).eq(
+            "group_id",
+            group_id
+        ).order(
+            "created_at"
+        ).execute()
 
-    rows = cursor.fetchall()
 
-    conn.close()
+        roster = {}
 
-    roster = {}
 
-    for user_id, user_name in rows:
+        for row in result.data:
 
-        roster[user_id] = user_name or "不明"
+            user_id = row.get(
+                "user_id"
+            )
 
-    return roster
+            user_name = row.get(
+                "user_name"
+            ) or "不明"
+
+
+            roster[user_id] = user_name
+
+
+        return roster
+
+
+    except Exception as e:
+
+        print(
+            "Supabase荒らし一覧取得エラー:",
+            e
+        )
+
+        return {}
 
 
 # ==========================================
@@ -301,24 +540,35 @@ def get_last_spam_user(group_id):
     if not group_id:
         return None
 
-    conn = sqlite3.connect(DB_PATH)
 
-    cursor = conn.cursor()
+    try:
 
-    cursor.execute("""
-        SELECT user_id
-        FROM last_spam
-        WHERE group_id = ?
-    """, (
-        group_id,
-    ))
+        result = supabase.table(
+            "last_spam"
+        ).select(
+            "user_id"
+        ).eq(
+            "group_id",
+            group_id
+        ).limit(
+            1
+        ).execute()
 
-    result = cursor.fetchone()
 
-    conn.close()
+        if result.data:
 
-    if result:
-        return result[0]
+            return result.data[0].get(
+                "user_id"
+            )
+
+
+    except Exception as e:
+
+        print(
+            "Supabase最後の荒らし取得エラー:",
+            e
+        )
+
 
     return None
 
@@ -327,7 +577,10 @@ def get_last_spam_user(group_id):
 # LINE署名確認
 # ==========================================
 
-def verify_signature(body, signature):
+def verify_signature(
+    body,
+    signature
+):
 
     if not signature:
         return False
@@ -335,15 +588,20 @@ def verify_signature(body, signature):
     if not CHANNEL_SECRET:
         return False
 
+
     hash_value = hmac.new(
         CHANNEL_SECRET.encode("utf-8"),
         body,
         hashlib.sha256
     ).digest()
 
+
     expected_signature = base64.b64encode(
         hash_value
-    ).decode("utf-8")
+    ).decode(
+        "utf-8"
+    )
+
 
     return hmac.compare_digest(
         expected_signature,
@@ -355,7 +613,10 @@ def verify_signature(body, signature):
 # LINE返信
 # ==========================================
 
-def reply_message(reply_token, text):
+def reply_message(
+    reply_token,
+    text
+):
 
     if not CHANNEL_ACCESS_TOKEN:
         return
@@ -363,12 +624,18 @@ def reply_message(reply_token, text):
     if not reply_token:
         return
 
-    url = f"{LINE_API}/message/reply"
+
+    url = (
+        f"{LINE_API}/message/reply"
+    )
+
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
+        "Authorization":
+        f"Bearer {CHANNEL_ACCESS_TOKEN}"
     }
+
 
     data = {
         "replyToken": reply_token,
@@ -380,6 +647,7 @@ def reply_message(reply_token, text):
         ]
     }
 
+
     try:
 
         response = requests.post(
@@ -389,11 +657,13 @@ def reply_message(reply_token, text):
             timeout=10
         )
 
+
         print(
             "LINE reply:",
             response.status_code,
             response.text
         )
+
 
     except Exception as e:
 
@@ -407,16 +677,41 @@ def reply_message(reply_token, text):
 # LINEユーザー名取得
 # ==========================================
 
-def get_user_name(user_id, group_id=None):
+def get_user_name(
+    user_id,
+    group_id=None
+):
 
     if not user_id:
         return "不明"
 
+
+    # --------------------------------------
+    # メモリキャッシュ
+    # --------------------------------------
+
     if user_id in user_names:
+
         return user_names[user_id]
+
+
+    # --------------------------------------
+    # Supabaseキャッシュ
+    # --------------------------------------
+
+    cached_name = get_cached_user_name(
+        user_id
+    )
+
+
+    if cached_name:
+
+        return cached_name
+
 
     if not CHANNEL_ACCESS_TOKEN:
         return "不明"
+
 
     headers = {
         "Authorization":
@@ -425,7 +720,7 @@ def get_user_name(user_id, group_id=None):
 
 
     # --------------------------------------
-    # グループメンバーとして取得
+    # グループメンバー取得
     # --------------------------------------
 
     if group_id:
@@ -436,6 +731,7 @@ def get_user_name(user_id, group_id=None):
             f"{user_id}"
         )
 
+
         try:
 
             response = requests.get(
@@ -443,6 +739,7 @@ def get_user_name(user_id, group_id=None):
                 headers=headers,
                 timeout=10
             )
+
 
             if response.status_code == 200:
 
@@ -453,9 +750,18 @@ def get_user_name(user_id, group_id=None):
                     "不明"
                 )
 
+
                 user_names[user_id] = name
 
+
+                save_user_name(
+                    user_id,
+                    name
+                )
+
+
                 return name
+
 
         except Exception as e:
 
@@ -469,7 +775,11 @@ def get_user_name(user_id, group_id=None):
     # プロフィール取得
     # --------------------------------------
 
-    url = f"{LINE_API}/profile/{user_id}"
+    url = (
+        f"{LINE_API}/profile/"
+        f"{user_id}"
+    )
+
 
     try:
 
@@ -478,6 +788,7 @@ def get_user_name(user_id, group_id=None):
             headers=headers,
             timeout=10
         )
+
 
         if response.status_code == 200:
 
@@ -488,9 +799,18 @@ def get_user_name(user_id, group_id=None):
                 "不明"
             )
 
+
             user_names[user_id] = name
 
+
+            save_user_name(
+                user_id,
+                name
+            )
+
+
             return name
+
 
     except Exception as e:
 
@@ -517,6 +837,17 @@ def send_discord_message(content):
 
         return
 
+
+    # Discord最大文字数対策
+
+    if len(content) > 1900:
+
+        content = (
+            content[:1900]
+            + "\n…"
+        )
+
+
     try:
 
         response = requests.post(
@@ -527,11 +858,13 @@ def send_discord_message(content):
             timeout=10
         )
 
+
         print(
             "Discord:",
             response.status_code,
             response.text
         )
+
 
     except Exception as e:
 
@@ -539,27 +872,6 @@ def send_discord_message(content):
             "Discord通知エラー:",
             e
         )
-
-
-# ==========================================
-# Discord：荒らし検知
-# ==========================================
-
-def send_discord_notification(
-    user_name,
-    user_id,
-    text
-):
-
-    content = (
-        "🚨 **荒らし検知**\n"
-        f"名前: {user_name}\n"
-        f"LINEユーザーID: `{user_id}`\n"
-        f"メッセージ: {text}\n\n"
-        "⚠️ このユーザーは荒らし登録済みです。"
-    )
-
-    send_discord_message(content)
 
 
 # ==========================================
@@ -582,7 +894,10 @@ def send_discord_forbidden_notification(
         "⚠️ 自動的に荒らし登録しました。"
     )
 
-    send_discord_message(content)
+
+    send_discord_message(
+        content
+    )
 
 
 # ==========================================
@@ -638,7 +953,9 @@ def send_discord_roster(roster):
         "📋 **荒らし登録一覧**"
     ]
 
+
     number = 1
+
 
     for user_id, user_name in roster.items():
 
@@ -700,7 +1017,6 @@ def send_discord_spam_activity(
     text
 ):
 
-    # Discordの長文対策
     if len(text) > 1500:
 
         text = text[:1500] + "…"
@@ -717,7 +1033,7 @@ def send_discord_spam_activity(
 
 
 # ==========================================
-# Discord：退出
+# Discord：メンバー退出
 # ==========================================
 
 def send_discord_member_left_notification(
@@ -734,8 +1050,7 @@ def send_discord_member_left_notification(
             f"名前: {user_name}\n"
             f"LINEユーザーID: `{user_id}`\n"
             f"グループID: `{group_id}`\n\n"
-            "⚠️ このユーザーは荒らし登録されていました。\n"
-            "グループからの退出を検知しました。"
+            "⚠️ このユーザーは荒らし登録されていました。"
         )
 
     else:
@@ -744,19 +1059,13 @@ def send_discord_member_left_notification(
             "👋 **グループメンバー退出検知**\n\n"
             f"名前: {user_name}\n"
             f"LINEユーザーID: `{user_id}`\n"
-            f"グループID: `{group_id}`\n\n"
-            "メンバーの退出を検知しました。"
+            f"グループID: `{group_id}`"
         )
 
 
-    send_discord_message(content)
-
-
-# ==========================================
-# DB初期化
-# ==========================================
-
-init_db()
+    send_discord_message(
+        content
+    )
 
 
 # ==========================================
@@ -777,7 +1086,7 @@ def callback():
 
 
     # --------------------------------------
-    # 署名確認
+    # LINE署名確認
     # --------------------------------------
 
     if not verify_signature(
@@ -785,16 +1094,21 @@ def callback():
         signature
     ):
 
-        print("署名エラー")
+        print(
+            "署名エラー"
+        )
 
         abort(400)
 
 
-    data = request.get_json()
+    data = request.get_json(
+        silent=True
+    )
+
 
     if not data:
 
-        return "OK"
+        return "OK", 200
 
 
     events = data.get(
@@ -808,6 +1122,7 @@ def callback():
     # ======================================
 
     for event in events:
+
 
         event_type = event.get(
             "type"
@@ -824,6 +1139,7 @@ def callback():
                 "source",
                 {}
             )
+
 
             group_id = source.get(
                 "groupId"
@@ -844,6 +1160,7 @@ def callback():
                 "left",
                 {}
             )
+
 
             members = left.get(
                 "members",
@@ -903,6 +1220,7 @@ def callback():
                 {}
             )
 
+
             group_id = source.get(
                 "groupId"
             )
@@ -916,6 +1234,7 @@ def callback():
                 "joined",
                 {}
             )
+
 
             members = joined.get(
                 "members",
@@ -952,7 +1271,7 @@ def callback():
 
 
         # ==================================
-        # メッセージ以外
+        # メッセージ以外は無視
         # ==================================
 
         if event_type != "message":
@@ -965,10 +1284,11 @@ def callback():
         )
 
 
-        if message.get(
-            "type"
-        ) != "text":
+        # ==================================
+        # テキスト以外は無視
+        # ==================================
 
+        if message.get("type") != "text":
             continue
 
 
@@ -1011,21 +1331,16 @@ def callback():
 
 
         # ==================================
-        # メッセージ記録
+        # メッセージ履歴保存
         # ==================================
 
         if message_id and user_id:
 
-            message_users[
-                message_id
-            ] = user_id
-
-
-        if message_id and group_id:
-
-            message_groups[
-                message_id
-            ] = group_id
+            save_message(
+                message_id,
+                user_id,
+                group_id
+            )
 
 
         # ==================================
@@ -1038,28 +1353,35 @@ def callback():
 
 
         quoted_user_id = None
-
         quoted_user_name = None
 
 
         if quoted_message_id:
 
-            quoted_user_id = message_users.get(
+            quoted_info = get_message_info(
                 quoted_message_id
             )
 
 
-            quoted_group_id = message_groups.get(
-                quoted_message_id
-            )
+            if quoted_info:
 
-
-            if quoted_user_id:
-
-                quoted_user_name = get_user_name(
-                    quoted_user_id,
-                    group_id or quoted_group_id
+                quoted_user_id = quoted_info.get(
+                    "user_id"
                 )
+
+
+                quoted_group_id = quoted_info.get(
+                    "group_id"
+                )
+
+
+                if quoted_user_id:
+
+                    quoted_user_name = get_user_name(
+                        quoted_user_id,
+                        group_id
+                        or quoted_group_id
+                    )
 
 
         # ==================================
@@ -1081,6 +1403,7 @@ def callback():
                     user_name,
                     user_id
                 )
+
 
             else:
 
@@ -1116,7 +1439,7 @@ def callback():
 
 
         # ==================================
-        # 管理者コマンド確認
+        # 管理者コマンド
         # ==================================
 
         admin_commands = [
@@ -1167,6 +1490,7 @@ def callback():
                     "📋 荒らし登録者はいません。"
                 )
 
+
             else:
 
                 names = []
@@ -1174,7 +1498,10 @@ def callback():
                 number = 1
 
 
-                for registered_user_id, registered_name in roster.items():
+                for (
+                    registered_user_id,
+                    registered_name
+                ) in roster.items():
 
                     names.append(
                         f"{number}. {registered_name}"
@@ -1190,7 +1517,6 @@ def callback():
                 )
 
 
-            # DiscordにはIDも送る
             send_discord_roster(
                 roster
             )
@@ -1218,7 +1544,6 @@ def callback():
             target_user_id = quoted_user_id
 
 
-            # 返信先がなければ最後の登録者
             if not target_user_id:
 
                 target_user_id = get_last_spam_user(
@@ -1327,11 +1652,21 @@ def callback():
             )
 
 
-            register_spam_user(
+            success = register_spam_user(
                 group_id,
                 quoted_user_id,
                 target_name
             )
+
+
+            if not success:
+
+                reply_message(
+                    reply_token,
+                    "❌ 荒らし登録に失敗しました。"
+                )
+
+                continue
 
 
             reply_message(
@@ -1463,38 +1798,48 @@ def callback():
                 )
 
 
-                # 自動荒らし登録
-                register_spam_user(
+                success = register_spam_user(
                     group_id,
                     user_id,
                     user_name
                 )
 
 
-                send_discord_forbidden_notification(
-                    user_name,
-                    user_id,
-                    text,
-                    detected_word
-                )
+                if success:
 
-
-                if not already_registered:
-
-                    send_discord_register_notification(
+                    send_discord_forbidden_notification(
                         user_name,
-                        user_id
+                        user_id,
+                        text,
+                        detected_word
                     )
 
 
-                reply_message(
-                    reply_token,
-                    "🚨 禁句を検知しました。\n\n"
-                    f"対象: {user_name}\n"
-                    f"検出: {detected_word}\n\n"
-                    "このユーザーを荒らし登録しました。\n"
-                    "今後の発言はDiscordへ通知されます。"
-                )
+                    if not already_registered:
+
+                        send_discord_register_notification(
+                            user_name,
+                            user_id
+                        )
+
+
+                    reply_message(
+                        reply_token,
+                        "🚨 禁句を検知しました。\n\n"
+                        f"対象: {user_name}\n"
+                        f"検出: {detected_word}\n\n"
+                        "このユーザーを荒らし登録しました。\n"
+                        "今後の発言はDiscordへ通知されます。"
+                    )
+
+
+                else:
+
+                    reply_message(
+                        reply_token,
+                        "⚠️ 禁句を検知しましたが、"
+                        "荒らし登録に失敗しました。"
+                    )
 
 
             continue
@@ -1541,7 +1886,7 @@ def callback():
         )
 
 
-    return "OK"
+    return "OK", 200
 
 
 # ==========================================
@@ -1555,6 +1900,22 @@ def callback():
 def index():
 
     return "LINE Protection Bot is running!"
+
+
+# ==========================================
+# ヘルスチェック
+# ==========================================
+
+@app.route(
+    "/health",
+    methods=["GET"]
+)
+def health():
+
+    return {
+        "status": "ok",
+        "service": "LINE Protection Bot"
+    }, 200
 
 
 # ==========================================
