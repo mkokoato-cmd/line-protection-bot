@@ -531,6 +531,255 @@ def get_roster(group_id):
         return {}
 
 
+
+
+
+
+> Rblack
+> Rblack list
+> Croom
+
+Croom >> room作製(Croom: @～)
+
+Rblack >> 既読ブラリスを消したりします(Rblack:add or del: @mentions)
+
+Rblack list >> 既読ブラリスを確認します
+
+add simple kicker >> 簡易キッカーを登録します
+
+alltag >> オールメンション
+
+amid >> 自分のmidを送信します
+
+announce >> 取得したアナウンスを送信します
+
+audio >> テキストを音声にします(audio:text)
+
+auto join >> 自動参加をオン/オフにします
+
+auto leave >> 強制自動退出をオン/オフします
+
+best friend >> 最も古くからいる友達を出します
+
+black kick >> ブラリスを蹴ります
+
+black list >> ブラリスを確認します
+
+broadcast >> 全グループに送信します(broadcast:text, broadcast:text:gid, gid)
+
+cb >> ブロックされてるか確認
+
+check >> リプライしたメッセージの既読した人を出します
+
+check prefix >> 接頭辞の確認
+
+commands >> 変更したコマンドを送信します
+
+conc >> コマンドを並行実行します(conc:command)
+
+contact >> midから連絡先を送信します(contact:mid)
+
+contact cb >> 送信したアカウントにブロックされているか確認できます
+
+contact info >> 送信されたアカウントの情報を出します
+
+conti >> コマンドを連続実行します(conti:command)
+
+conti run >> 指定した回数指定したコマンドを実行します
+
+copy >> リプライしたメッセージをコピーします
+
+del memo >> メモを消します
+
+del simple kicker >> 簡易キッカーを削除します
+
+delete >> 登録したコマンドを削除します(delete:after command name)
+
+delkicker >> 登録したキッカーを削除します
+
+dis greeting >> あいさつを無効にします
+
+event >> 現在のイベントを操作できます(event:ls, del)
+
+exit >> botを終了します
+
+fhelp >> 説明書を出します
+
+find mid >> 参加中すべてのグループからmidを探します
+
+flex_f >> flex
+
+gid >> gidを送信します
+
+gid all >> 参加しているグループのIDを全て出します
+
+google >> Googleの検索結果のURLを送信します
+
+greeting >> 挨拶を設定します
+
+group >> 所得したGroupを送信します(group, group:gid)
+
+gurl >> グループのURLを出します(gurl, gurl:gid)
+
+help >> 説明書を送信します
+
+invite override >> コテハンで招待します(invite override:name)
+
+invitee >> 招待中のメンバーを送信します
+
+join greeting >> 自動参加時の挨拶をオン/オフします
+
+julia >> 計算します
+
+kick >> ブラリスから消したりします(black:add or del: @mentions)
+
+kickall strong >> 規制が来る可能性大
+
+kicker >> キッカーをログインさせます
+
+kicker prefix >> キッカーの接頭辞を変更します
+
+kicker tokens >> 登録してるキッカーのトークンなどを出します
+
+lyric >> 歌詞を検索して送信します
+
+macro >> 参加マクロ(すぐ凍結します)(macro:num, macro:num:gid)
+
+mailadd >> 廃止しました
+
+mcon >> 取得したContactを送信します(mcon:@mention)
+
+me >> 自身のアカウントを送信します
+
+mea >> いろんな速度を測定します(mea:rcv, noop, send, contact, profile)
+
+memo >> メモを設定します
+
+memo list >> メモの名前一覧を出します
+
+mention macro >> メンションマクロします(mention macro:num: @mention)
+
+mid >> midを送信します
+
+mk >> メンションした人を蹴ります(mk: @mention)
+
+mmid >> midを所得します
+
+msg macro >> メッセージマクロします(msg macro:num:text)
+
+multi close >> 進行中のマルチを閉じます
+
+multi join >> マルチに参加します
+
+multi kickall >> マルチで全蹴りします
+
+multi login >> マルチメンバーをログインさせます
+
+multi open >> マルチを開きます
+
+multi test >> マルチで動作確認します
+
+multi url join >> マルチに参加している人を参加させます
+
+multi users >> マルチに参加してる人を出します
+
+nc >> 指定した値が名前に含まれている人をキャンセルします(nc:name)
+
+nk >> 入力した値を名前に含んだ人を蹴ります(nk:name)
+
+noc >> 指定した値がコテハンに含まれている人をキャンセルします(noc:name)
+
+nock >> 指定した値がコテハンに含まれている人を蹴り、キャンセルします(nock:name)
+
+nok >> 指定した文字がコテハンに含まれている人を蹴ります(nok:name)
+
+notice >> お知らせを送信します
+
+notice on >> 通知をオンにします
+
+op time >> 稼働時間を送信します
+
+override >> コテハンします(override:name: @mention)
+
+paste >> コピーしたメッセージを送信します
+
+ping >> 回線速度的なのを出します
+
+prefix >> 接頭辞を変更します
+
+protect >> 仮保護botを起動します
+
+random exec >> コマンドをランダムで実行します
+
+reboot >> 再起動します(メンテ)
+
+reply run >> リプライしたコマンドを再実行できます
+
+res mention >> メンションに返信します
+
+restore >> 送信取り消し感知を設定します
+
+send >> makuro
+
+send count >> ログインしてから送信したメッセージ数を送信します
+
+send greeting >> 自動参加時のメッセージ
+
+send memo >> メモを送信します
+
+send restore >> 直近の取り消されたメッセージを出します
+
+set auto join message >> 自動参加した時に自動で送信するメッセージを設定します
+
+setting >> 設定状況を送信します
+
+simple kicker >> 簡易キッカーをログインさせます
+
+speed >> 速度を計測します
+
+test >> 動作確認をします
+
+ticket update >> グループのを更新します
+
+time cancel >> 時間間隔を指定してキャンセルします
+
+timeline info >> 共有したタイムラインの情報を出します
+
+tokenadd >> キッカーを追加します(LITEのトークンのみ)(tokenadd:auth token)
+
+train >> 乗り換え案内(ベータ)
+
+unsend >> リプライしたメッセージを取り消します
+
+107: unsend s >> 指定した数、送信取り消します
+
+update >> コマンドを変更します(update:command name:aftar command name)
+
+url >> グループのURLを開閉できます(url:open/close)
+
+use rate >> コマンドの使用率ランキング
+
+weather >> 天気を出します
+
+112: white >> ホワリスから消したりします(white:add or del: @mentions)
+
+white list >> ホワリスを確認します
+
+youtube >> 保存した動画を送信します
+
+トーク荒らし >> トークを荒らします
+
+ハメハメ波 >> エライザのハメ撮り
+
+メンション確認 >> 最後にメンションされたメッセージにリプライします
+
+ログ消し >> メンションした相手を蹴ってログを消します(clear log:@mention)
+
+ロケット団がゲットだぜ！ >> 指定のgidを入れて全蹴りします
+
+参戦 >> なんか
+
+規制確認 >> 規制を確認します
 # ==========================================
 # 最後に登録した荒らし
 # ==========================================
